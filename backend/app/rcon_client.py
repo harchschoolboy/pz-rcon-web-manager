@@ -6,7 +6,7 @@ from typing import Optional
 from app.config import settings
 
 # Setup logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rcon")
 
 # Reduce noise from other loggers

@@ -21,8 +21,8 @@ Web-based administration panel for Project Zomboid dedicated servers. Manage you
 
 1. Clone the repository:
 ```bash
-git clone <REPOSITORY_URL>
-cd pz-webadmin
+git clone https://github.com/harchschoolboy/pz-rcon-web-manager.git
+cd pz-rcon-web-manager
 ```
 
 2. Create `.env` file:
@@ -31,21 +31,22 @@ cp .env.example .env
 ```
 
 3. Configure authentication in `.env`:
-```env
-AUTH_USERNAME=admin
-AUTH_PASSWORD=your_secure_password
-JWT_SECRET=your_random_secret_string
-ENCRYPTION_KEY=<generate_with_command_below>
-```
 
 Generate encryption key:
 ```bash
 python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-4. Build and run:
+```env
+AUTH_USERNAME=admin
+AUTH_PASSWORD=your_secure_password
+JWT_SECRET=your_random_secret_string
+ENCRYPTION_KEY=from_command_above
+```
+
+4. Run:
 ```bash
-docker-compose up -d --build
+docker-compose up -d 
 ```
 
 5. Open http://localhost:8000 and login with your credentials.
@@ -63,8 +64,6 @@ docker run -d \
   -v pz_webadmin_data:/data \
   harchschoolboy/pz-rcon-server-manager:latest
 ```
-
-> **Note**: The `-v pz_webadmin_data:/data` mounts a Docker volume where the SQLite database is stored. This ensures your server configurations and mod lists persist between container restarts.
 
 ## Environment Variables
 
@@ -89,7 +88,7 @@ If you run app in docker in WSL on windows to access local server, use host.dock
 
 ## License
 
-MIT
+GPL
 
 
 
