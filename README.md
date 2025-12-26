@@ -86,6 +86,13 @@ docker run -d \
 ## FYI
 If you run app in docker in WSL on windows to access local server, use host.docker.internal instead of localhost
 
+If your 8000 is busy, change 
+    ports:
+      - "8000:8000"
+to
+    ports:
+      - "your_port:8000"
+
 ## License
 
 GPL

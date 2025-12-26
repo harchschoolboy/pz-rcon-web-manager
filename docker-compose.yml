@@ -18,8 +18,6 @@ services:
       - AUTH_PASSWORD=${AUTH_PASSWORD:-admin}
       - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
       - JWT_EXPIRE_HOURS=${JWT_EXPIRE_HOURS:-24}
-      - API_HOST=0.0.0.0
-      - API_PORT=8000
       - RCON_TIMEOUT=10
       - RCON_RECONNECT_DELAY=5
     volumes:
