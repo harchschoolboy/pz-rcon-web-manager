@@ -8,7 +8,7 @@ class ServerBase(BaseModel):
     name: str = Field(..., description="Server name")
     host: str = Field(..., description="Server host/IP")
     port: int = Field(..., description="RCON port")
-    username: Optional[str] = Field(None, description="Optional username")
+    username: str = Field(default="admin", description="RCON username")
     password: str = Field(..., description="RCON password")
 
 
@@ -30,7 +30,7 @@ class ServerResponse(BaseModel):
     name: str
     host: str
     port: int
-    username: Optional[str]
+    username: Optional[str] = "admin"  # Default for old records with NULL
     is_active: bool
     created_at: datetime
     updated_at: datetime

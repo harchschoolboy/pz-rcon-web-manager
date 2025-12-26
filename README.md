@@ -25,31 +25,25 @@ git clone https://github.com/harchschoolboy/pz-rcon-web-manager.git
 cd pz-rcon-web-manager
 ```
 
-2. Create `.env` file:
+2. (Optional) Create `.env` file to customize settings:
 ```bash
 cp .env.example .env
-```
-
-3. Configure authentication in `.env`:
-
-Generate encryption key:
-```bash
-python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
 ```env
 AUTH_USERNAME=admin
 AUTH_PASSWORD=your_secure_password
-JWT_SECRET=your_random_secret_string
-ENCRYPTION_KEY=from_command_above
+# JWT_SECRET and ENCRYPTION_KEY are auto-generated if not provided
 ```
 
-4. Run:
+3. Run:
 ```bash
 docker-compose up -d 
 ```
 
-5. Open http://localhost:8000 and login with your credentials.
+4. Open http://localhost:8000 and login with your credentials.
+
+> **Note**: `ENCRYPTION_KEY` and `JWT_SECRET` are automatically generated on first run and saved to `/data/.encryption_key` and `/data/.jwt_secret`. You only need to set them manually if you want to use specific values or migrate data between instances.
 
 ## Quick Start (Docker Hub)
 
@@ -59,11 +53,11 @@ docker run -d \
   -p 8000:8000 \
   -e AUTH_USERNAME=admin \
   -e AUTH_PASSWORD=your_secure_password \
-  -e JWT_SECRET=your_random_secret \
-  -e ENCRYPTION_KEY=O4mS-gGGmiCwa2a56W9c76LAhgNJqds3odEppmCMlSg= \
   -v pz_webadmin_data:/data \
   harchschoolboy/pz-rcon-server-manager:latest
 ```
+
+> **Note**: Keys are auto-generated and stored in the `/data` volume.
 
 ## Environment Variables
 
@@ -71,10 +65,12 @@ docker run -d \
 |----------|-------------|---------|
 | `AUTH_USERNAME` | Admin panel username | `admin` |
 | `AUTH_PASSWORD` | Admin panel password | `admin` |
-| `JWT_SECRET` | Secret key for JWT tokens | — |
+| `JWT_SECRET` | Secret key for JWT tokens | Auto-generated |
 | `JWT_EXPIRE_HOURS` | Token expiration time | `24` |
-| `ENCRYPTION_KEY` | Key for encrypting RCON passwords | — |
+| `ENCRYPTION_KEY` | Key for encrypting RCON passwords | Auto-generated |
 | `DATABASE_URL` | SQLite database path | `sqlite+aiosqlite:////data/pz_webadmin.db` |
+
+> **Security Note**: Auto-generated keys are saved to `/data/.encryption_key` and `/data/.jwt_secret`. If you delete these files, new keys will be generated, but existing encrypted passwords will become unreadable and active sessions will be invalidated.
 
 ## Usage
 
@@ -82,6 +78,33 @@ docker run -d \
 2. **Connect** — click on the server and press Connect button
 3. **Manage mods** — go to Mods tab, paste Steam Workshop URL to add mods
 4. **Apply mods** — select mods to enable and click Apply to send configuration to server
+
+## Build Standalone EXE (Windows)
+
+You can build a standalone Windows executable that doesn't require Docker or Python:
+
+### Prerequisites
+- Python 3.11+
+- Node.js 18+
+
+### Build
+```bash
+# Run the build script
+build.bat
+```
+
+This will:
+1. Build the React frontend
+2. Bundle it with the Python backend
+3. Create `dist/pz_webadmin.exe` (~50-100MB)
+
+### Run
+1. Copy `pz_webadmin.exe` to desired location
+2. (Optional) Create `.env` file next to exe with custom settings
+3. Run `pz_webadmin.exe`
+4. A browser window will open automatically
+
+Data and auto-generated keys will be stored in `data/` folder next to the executable.
 
 ## FYI
 If you run app in docker in WSL on windows to access local server, use host.docker.internal instead of localhost
