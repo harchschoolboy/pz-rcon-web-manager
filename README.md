@@ -86,7 +86,7 @@ docker run -d \
 ## FYI
 If you run app in docker in WSL on windows to access local server, use host.docker.internal instead of localhost
 
-Mod page shows APP state of Mods, not Server State. To update APP state of mods, use SYNC button.
+Mod page shows APP state of Mods, not Server State. To update APP state of mods from server, use SYNC button.
 
 Sync button will merge lists, and all mods currently present on server will be in enabled state.
 
