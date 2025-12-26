@@ -33,7 +33,8 @@ WORKDIR /app
 COPY backend/requirements.txt .
 
 # Install deps in one layer, then cleanup
-RUN apk add --no-cache --virtual .build-deps gcc musl-dev && \
+RUN apk add --no-cache --virtual .build-deps gcc musl-dev libffi-dev && \
+    pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
     apk del .build-deps && \
     rm -rf /root/.cache /tmp/*

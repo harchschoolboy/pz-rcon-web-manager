@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   pz-webadmin:
-    image: harchschoolboy/pz-rcon-server-manager:latest
+    image: harchschoolboy/pz-rcon-server-manager:1.0.1
     build:
       context: .
       dockerfile: Dockerfile

@@ -46,3 +46,15 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Frontend build output
+frontend/dist/
+frontend/build/
+backend/static/
+frontend/node_modules/

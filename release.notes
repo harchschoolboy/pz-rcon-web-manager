@@ -1,0 +1,85 @@
+# PZ WebAdmin v1.0.0
+
+Web-based administration panel for Project Zomboid dedicated servers. Manage your servers, mods, and settings through a modern web interface using RCON protocol.
+
+## ✨ Features
+
+### 🖥️ Multi-Server Management
+- Add and manage multiple PZ servers from a single panel
+- Real-time connection status with WebSocket
+- Live player count display on server cards
+- Encrypted RCON password storage
+
+### 🔐 Authentication
+- Secure JWT-based authentication
+- Configurable username/password via environment variables
+- Token auto-refresh
+
+### 🎛️ RCON Console
+- Execute commands directly on the server
+- Command history with ↑/↓ navigation
+- Popular commands quick-access panel
+- Resizable console output area
+- Real-time output streaming
+
+### 🧩 Mods Management
+- **Add mods** from Steam Workshop URL (auto-fetch name and ModIDs)
+- **Import from line** — bulk import from WorkshopItems string
+- **Sync from server** — import mods currently enabled on server with progress display
+- **Disable missing** option — disable mods not present on server during sync
+- **Export/Import** mod configurations as JSON
+- **Apply** changes directly to server via RCON
+- Multi-ModID support (mods with multiple variants)
+- Enable/disable individual mods
+
+### ⚙️ Server Settings
+- View and edit server configuration
+- Category filtering
+- Search by setting name
+- Real-time save via RCON changeoption command
+
+### 🌍 Localization
+- English and Ukrainian languages
+
+---
+
+## 🚀 Deployment Options
+
+### Docker (Recommended)
+
+```
+docker run -d -p 8000:8000 \
+  -e AUTH_USERNAME=admin \
+  -e AUTH_PASSWORD=yourpassword \
+  -v pz_data:/data \
+  harchschoolboy/pz-rcon-server-manager:latest
+```
+
+### Standalone Windows EXE
+- Single portable executable (~80MB)
+- No Docker or Python required
+- Data stored in `data/` folder next to exe
+- Configure via `.env` file
+
+---
+
+## 🔧 Configuration
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| AUTH_USERNAME | Admin username | admin |
+| AUTH_PASSWORD | Admin password | admin |
+| JWT_SECRET | JWT signing key | — |
+| ENCRYPTION_KEY | RCON password encryption key | — |
+| API_PORT | Web UI port | 8000 |
+
+---
+
+## 📋 Requirements
+- Project Zomboid server with RCON enabled
+- Network access to RCON port
+
+---
+
+## ⚠️ Known Issues
+- Some antivirus software may flag the exe (false positive from PyInstaller)
