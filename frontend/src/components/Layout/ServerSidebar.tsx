@@ -4,7 +4,7 @@ import { useServerStore } from '../../store/serverStore';
 import { useI18n } from '../../i18n';
 import { 
   Server as ServerIcon, Plus, Trash2, Power, PowerOff, Edit, 
-  ChevronLeft, ChevronRight, X
+  ChevronLeft, ChevronRight, X, Users
 } from 'lucide-react';
 import type { Server } from '../../types/api';
 
@@ -18,7 +18,7 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
   onToggleCollapse 
 }) => {
   const { t } = useI18n();
-  const { servers, setServers, addServer, updateServer, removeServer, selectServer, selectedServerId } = useServerStore();
+  const { servers, setServers, addServer, updateServer, removeServer, selectServer, selectedServerId, playersOnline, connectionStatus } = useServerStore();
   const [loading, setLoading] = useState(true);
   const [connectionStatuses, setConnectionStatuses] = useState<Record<number, boolean>>({});
   const [showAddForm, setShowAddForm] = useState(false);
@@ -231,6 +231,7 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
             servers.map((server) => {
               const isConnected = connectionStatuses[server.id];
               const isSelected = selectedServerId === server.id;
+              const showPlayers = isSelected && isConnected && connectionStatus === 'connected' && playersOnline;
 
               return (
                 <div
@@ -249,11 +250,23 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
                         {server.host}:{server.port}
                       </p>
                     </div>
-                    <div
-                      className={`w-2.5 h-2.5 rounded-full mt-1 ${
-                        isConnected ? 'bg-green-500' : 'bg-gray-500'
-                      }`}
-                    />
+                    <div className="flex items-center gap-2">
+                      {/* Players Online */}
+                      {showPlayers && (
+                        <div className="flex items-center gap-1 text-xs bg-gray-700/70 px-1.5 py-0.5 rounded">
+                          <Users size={10} className="text-blue-400" />
+                          <span className="text-white">
+                            {playersOnline.current}
+                            {playersOnline.max > 0 && <span className="text-gray-400">/{playersOnline.max}</span>}
+                          </span>
+                        </div>
+                      )}
+                      <div
+                        className={`w-2.5 h-2.5 rounded-full ${
+                          isConnected ? 'bg-green-500' : 'bg-gray-500'
+                        }`}
+                      />
+                    </div>
                   </div>
 
                   <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>

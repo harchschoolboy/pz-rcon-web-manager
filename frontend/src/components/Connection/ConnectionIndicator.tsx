@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { useServerStore, ConnectionStatus } from '../../store/serverStore';
 import { useI18n } from '../../i18n';
 import { connectionAPI, commandAPI } from '../../api/client';
-import { Wifi, WifiOff, Loader2, RefreshCw, Users, RotateCcw } from 'lucide-react';
+import { Wifi, WifiOff, Loader2, RefreshCw, RotateCcw } from 'lucide-react';
 
 const RECONNECT_DELAYS = [5, 10, 15, 30, 60]; // seconds
 
@@ -226,17 +226,6 @@ export const ConnectionIndicator: React.FC = () => {
           )}
         </span>
       </div>
-
-      {/* Players Online */}
-      {connectionStatus === 'connected' && playersOnline && (
-        <div className="flex items-center gap-1 px-2 py-1 bg-gray-700/50 rounded text-sm">
-          <Users size={14} className="text-blue-400" />
-          <span className="text-white">
-            {playersOnline.current}
-            {playersOnline.max > 0 && <span className="text-gray-400">/{playersOnline.max}</span>}
-          </span>
-        </div>
-      )}
 
       {/* Actions */}
       <div className="flex items-center gap-2 ml-auto">

@@ -270,6 +270,7 @@ export interface SyncModsResponse {
   success: boolean;
   added: number;
   updated: number;
+  disabled: number;
   errors: string[];
   mods_found: Array<{
     workshop_id: string;
@@ -280,6 +281,13 @@ export interface SyncModsResponse {
   }>;
   server_mods_count: number;
   server_workshops_count: number;
+}
+
+export interface ServerWorkshopIdsResponse {
+  new_workshop_ids: string[];
+  existing_workshop_ids: string[];
+  workshop_to_mod: Record<string, string>;
+  total_on_server: number;
 }
 
 export const modsAPI = {
@@ -324,6 +332,11 @@ export const modsAPI = {
 
   sync: async (serverId: number): Promise<SyncModsResponse> => {
     const { data } = await api.post(`/servers/${serverId}/mods/sync`);
+    return data;
+  },
+
+  getServerWorkshopIds: async (serverId: number): Promise<ServerWorkshopIdsResponse> => {
+    const { data } = await api.get(`/servers/${serverId}/mods/server-workshop-ids`);
     return data;
   },
 };

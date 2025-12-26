@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { modsAPI, Mod, SyncModsResponse } from '../../api/client';
 import { useServerStore } from '../../store/serverStore';
 import { useI18n } from '../../i18n';
 import { 
   Package, RefreshCw, ExternalLink, AlertCircle, Search, 
   Plus, Trash2, Download, Upload, Play, Loader2, Check, X,
-  Link, DownloadCloud, ChevronDown, ChevronRight
+  Link, DownloadCloud, ChevronDown, ChevronRight, FileText
 } from 'lucide-react';
 
 export const ModsManager: React.FC = () => {
@@ -36,6 +36,15 @@ export const ModsManager: React.FC = () => {
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<SyncModsResponse | null>(null);
   const [showSyncResult, setShowSyncResult] = useState(false);
+  const [disableMissing, setDisableMissing] = useState(true);
+  
+  // Import from line state
+  const [showImportLine, setShowImportLine] = useState(false);
+  const [importLineText, setImportLineText] = useState('');
+  const [importingFromLine, setImportingFromLine] = useState(false);
+  const [importLineProgress, setImportLineProgress] = useState({ current: 0, total: 0, currentId: '' });
+  const [importLineResults, setImportLineResults] = useState<Array<{ workshop_id: string; name?: string; mod_ids: string[]; status: 'success' | 'error'; error?: string }>>([]);
+  const importAbortRef = useRef(false);
 
   useEffect(() => {
     if (selectedServerId) {
@@ -233,18 +242,147 @@ export const ModsManager: React.FC = () => {
     
     setSyncing(true);
     setError(null);
-    setSyncResult(null);
+    setImportLineResults([]);
+    setImportLineProgress({ current: 0, total: 0, currentId: '' });
+    importAbortRef.current = false;
     
     try {
-      const result = await modsAPI.sync(selectedServerId);
-      setSyncResult(result);
+      // Step 1: Get workshop IDs from server (only new ones that aren't in DB)
+      const serverData = await modsAPI.getServerWorkshopIds(selectedServerId);
+      
+      if (serverData.new_workshop_ids.length === 0) {
+        // No new mods to sync
+        const disabledCount = await disableMissingMods(serverData);
+        setSyncResult({
+          success: true,
+          added: 0,
+          updated: 0,
+          disabled: disabledCount,
+          errors: [],
+          mods_found: [],
+          server_mods_count: serverData.total_on_server,
+          server_workshops_count: serverData.total_on_server
+        });
+        setShowSyncResult(true);
+        setSyncing(false);
+        loadMods(); // Reload mods to update UI
+        return;
+      }
+      
+      // Step 2: Process new workshop IDs with progress
+      const workshopIds = serverData.new_workshop_ids;
+      setImportLineProgress({ current: 0, total: workshopIds.length, currentId: '' });
       setShowSyncResult(true);
-      loadMods(); // Reload mods after sync
+      
+      const results: typeof importLineResults = [];
+      
+      for (let i = 0; i < workshopIds.length; i++) {
+        if (importAbortRef.current) break;
+        
+        const workshopId = workshopIds[i];
+        setImportLineProgress({ current: i + 1, total: workshopIds.length, currentId: workshopId });
+        
+        try {
+          // Parse workshop page
+          const url = `https://steamcommunity.com/sharedfiles/filedetails/?id=${workshopId}`;
+          const parsed = await modsAPI.parse(url);
+          
+          // Get the mod_id from server mapping if available
+          const serverModId = serverData.workshop_to_mod[workshopId];
+          const modIds = parsed.mod_ids.length > 0 ? parsed.mod_ids : (serverModId ? [serverModId] : ['unknown']);
+          const enabledModIds = serverModId ? [serverModId] : [];
+          
+          // Add mod to database
+          await modsAPI.add(selectedServerId, {
+            workshop_id: parsed.workshop_id,
+            mod_ids: modIds,
+            enabled_mod_ids: enabledModIds,
+            name: parsed.name || undefined,
+            is_enabled: enabledModIds.length > 0
+          });
+          
+          results.push({
+            workshop_id: workshopId,
+            name: parsed.name || undefined,
+            mod_ids: modIds,
+            status: 'success'
+          });
+        } catch (err: any) {
+          results.push({
+            workshop_id: workshopId,
+            mod_ids: [],
+            status: 'error',
+            error: err.response?.data?.detail || err.message || 'Unknown error'
+          });
+        }
+        
+        setImportLineResults([...results]);
+        
+        // Delay between requests
+        if (i < workshopIds.length - 1 && !importAbortRef.current) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+      
+      // Update sync result
+      const disabledCount = await disableMissingMods(serverData);
+      
+      setSyncResult({
+        success: true,
+        added: results.filter(r => r.status === 'success').length,
+        updated: 0,
+        disabled: disabledCount,
+        errors: results.filter(r => r.status === 'error').map(r => `${r.workshop_id}: ${r.error}`),
+        mods_found: results.filter(r => r.status === 'success').map(r => ({
+          workshop_id: r.workshop_id,
+          mod_ids: r.mod_ids,
+          enabled_mod_ids: [],
+          name: r.name || null,
+          status: 'added'
+        })),
+        server_mods_count: serverData.total_on_server,
+        server_workshops_count: serverData.total_on_server
+      });
+      
+      loadMods();
     } catch (err: any) {
       setError(err.response?.data?.detail || t('mods.syncError'));
+      setShowSyncResult(false);
     } finally {
       setSyncing(false);
     }
+  };
+
+  const handleCancelSync = () => {
+    importAbortRef.current = true;
+  };
+
+  // Disable mods that are not on server (if option enabled)
+  const disableMissingMods = async (serverData: { existing_workshop_ids: string[]; new_workshop_ids: string[] }): Promise<number> => {
+    if (!disableMissing || !selectedServerId) return 0;
+    
+    // All workshop IDs that are on server
+    const serverWorkshopIds = new Set([...serverData.existing_workshop_ids, ...serverData.new_workshop_ids]);
+    
+    // Find mods in our list that are NOT on server and are currently enabled
+    const modsToDisable = mods.filter(mod => 
+      !serverWorkshopIds.has(mod.workshop_id) && mod.is_enabled
+    );
+    
+    let disabledCount = 0;
+    for (const mod of modsToDisable) {
+      try {
+        await modsAPI.update(selectedServerId, mod.id, {
+          enabled_mod_ids: [],
+          is_enabled: false
+        });
+        disabledCount++;
+      } catch (err) {
+        console.error(`Failed to disable mod ${mod.workshop_id}:`, err);
+      }
+    }
+    
+    return disabledCount;
   };
 
   const handleApplyMods = async () => {
@@ -306,6 +444,98 @@ export const ModsManager: React.FC = () => {
     }
     
     e.target.value = '';
+  };
+
+  const handleImportFromLine = async () => {
+    if (!selectedServerId || !importLineText.trim()) return;
+    
+    // Parse workshop IDs from the line
+    // Supports formats:
+    // WorkshopItems=123;456;789
+    // 123;456;789
+    // 123, 456, 789
+    let text = importLineText.trim();
+    
+    // Remove "WorkshopItems=" prefix if present
+    if (text.toLowerCase().includes('workshopitems')) {
+      text = text.replace(/^.*workshopitems\s*[=:]\s*["']?/i, '').replace(/["']?\s*$/, '');
+    }
+    
+    // Split by semicolon or comma
+    const workshopIds = text
+      .split(/[;,]/)
+      .map(id => id.trim())
+      .filter(id => /^\d+$/.test(id));
+    
+    if (workshopIds.length === 0) {
+      setError(t('mods.importLine.noIdsFound'));
+      return;
+    }
+    
+    setImportingFromLine(true);
+    setImportLineResults([]);
+    setImportLineProgress({ current: 0, total: workshopIds.length, currentId: '' });
+    importAbortRef.current = false;
+    
+    const results: typeof importLineResults = [];
+    
+    for (let i = 0; i < workshopIds.length; i++) {
+      if (importAbortRef.current) break;
+      
+      const workshopId = workshopIds[i];
+      setImportLineProgress({ current: i + 1, total: workshopIds.length, currentId: workshopId });
+      
+      try {
+        // Parse workshop page to get mod info
+        const url = `https://steamcommunity.com/sharedfiles/filedetails/?id=${workshopId}`;
+        const parsed = await modsAPI.parse(url);
+        
+        // Add mod to database in disabled state
+        await modsAPI.add(selectedServerId, {
+          workshop_id: parsed.workshop_id,
+          mod_ids: parsed.mod_ids.length > 0 ? parsed.mod_ids : ['unknown'],
+          enabled_mod_ids: [],  // Disabled by default
+          name: parsed.name || undefined,
+          is_enabled: false
+        });
+        
+        results.push({
+          workshop_id: workshopId,
+          name: parsed.name || undefined,
+          mod_ids: parsed.mod_ids,
+          status: 'success'
+        });
+      } catch (err: any) {
+        results.push({
+          workshop_id: workshopId,
+          mod_ids: [],
+          status: 'error',
+          error: err.response?.data?.detail || err.message || 'Unknown error'
+        });
+      }
+      
+      setImportLineResults([...results]);
+      
+      // Delay between requests (1 second) to avoid rate limiting
+      if (i < workshopIds.length - 1 && !importAbortRef.current) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    
+    setImportingFromLine(false);
+    loadMods();
+  };
+
+  const handleCancelImportLine = () => {
+    importAbortRef.current = true;
+  };
+
+  const resetImportLine = () => {
+    setShowImportLine(false);
+    setImportLineText('');
+    setImportLineResults([]);
+    setImportLineProgress({ current: 0, total: 0, currentId: '' });
+    importAbortRef.current = false;
   };
 
   const toggleExpanded = (modId: number) => {
@@ -377,6 +607,15 @@ export const ModsManager: React.FC = () => {
         </div>
         
         <div className="flex items-center gap-2">
+          <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer" title={t('mods.sync.disableMissingHint')}>
+            <input
+              type="checkbox"
+              checked={disableMissing}
+              onChange={(e) => setDisableMissing(e.target.checked)}
+              className="w-4 h-4 rounded bg-gray-600 border-gray-500 text-cyan-500"
+            />
+            {t('mods.sync.disableMissing')}
+          </label>
           <button
             onClick={handleSyncFromServer}
             disabled={syncing}
@@ -398,6 +637,14 @@ export const ModsManager: React.FC = () => {
             {t('common.import')}
             <input type="file" accept=".json" onChange={handleImport} className="hidden" />
           </label>
+          <button
+            onClick={() => setShowImportLine(true)}
+            className="flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-3 py-2 rounded-lg transition text-sm"
+            title={t('mods.importLine.title')}
+          >
+            <FileText size={16} />
+            {t('mods.importLine.button')}
+          </button>
           <button
             onClick={handleApplyMods}
             disabled={applying || enabledCount === 0}
@@ -457,7 +704,7 @@ export const ModsManager: React.FC = () => {
             <div className="col-span-2">{t('common.actions')}</div>
           </div>
           
-          <div className="divide-y divide-gray-700 max-h-[500px] overflow-y-auto">
+          <div className="divide-y divide-gray-700">
             {filteredMods.map((mod) => {
               const isExpanded = expandedMods.has(mod.id);
               const hasMultipleModIds = mod.mod_ids.length > 1;
@@ -757,92 +1004,319 @@ export const ModsManager: React.FC = () => {
       )}
 
       {/* Sync Result Modal */}
-      {showSyncResult && syncResult && (
+      {showSyncResult && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-gray-800 rounded-lg p-6 max-w-lg w-full mx-4 max-h-[80vh] overflow-y-auto">
+          <div className="bg-gray-800 rounded-lg p-6 max-w-lg w-full mx-4 max-h-[80vh] overflow-y-auto border border-gray-700">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-xl font-bold text-white flex items-center gap-2">
                 <DownloadCloud className="text-cyan-500" />
                 {t('mods.syncResult')}
               </h3>
+              {!syncing && (
+                <button
+                  onClick={() => setShowSyncResult(false)}
+                  className="text-gray-400 hover:text-white"
+                >
+                  <X size={24} />
+                </button>
+              )}
+            </div>
+
+            {/* Progress during sync */}
+            {syncing && importLineProgress.total > 0 && (
+              <div className="space-y-4 mb-4">
+                <div className="text-center">
+                  <Loader2 size={48} className="animate-spin text-cyan-500 mx-auto mb-4" />
+                  <p className="text-white text-lg mb-2">
+                    {t('mods.importLine.processing')} {importLineProgress.current} / {importLineProgress.total}
+                  </p>
+                  <p className="text-gray-400 text-sm font-mono">
+                    Workshop ID: {importLineProgress.currentId}
+                  </p>
+                </div>
+
+                {/* Progress bar */}
+                <div className="w-full bg-gray-700 rounded-full h-3">
+                  <div 
+                    className="bg-cyan-500 h-3 rounded-full transition-all duration-300"
+                    style={{ width: `${(importLineProgress.current / importLineProgress.total) * 100}%` }}
+                  />
+                </div>
+
+                <button
+                  onClick={handleCancelSync}
+                  className="w-full bg-red-600 hover:bg-red-700 text-white py-2 rounded-lg transition"
+                >
+                  {t('common.cancel')}
+                </button>
+
+                {/* Real-time results */}
+                {importLineResults.length > 0 && (
+                  <div className="max-h-48 overflow-y-auto space-y-1">
+                    {importLineResults.map((result, idx) => (
+                      <div 
+                        key={idx} 
+                        className={`rounded px-3 py-2 text-sm flex items-center justify-between ${
+                          result.status === 'success' 
+                            ? 'bg-green-900/30 border border-green-700/50' 
+                            : 'bg-red-900/30 border border-red-700/50'
+                        }`}
+                      >
+                        <span className="font-mono text-sm">{result.workshop_id}</span>
+                        <span className={result.status === 'success' ? 'text-green-400' : 'text-red-400'}>
+                          {result.name || result.error || 'OK'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Results after sync completes */}
+            {!syncing && syncResult && (
+              <>
+                {/* Stats */}
+                <div className={`grid gap-3 mb-4 ${syncResult.disabled > 0 ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                  <div className="bg-green-900/30 border border-green-700 rounded-lg p-3 text-center">
+                    <div className="text-2xl font-bold text-green-400">{syncResult.added}</div>
+                    <div className="text-sm text-gray-400">{t('mods.added')}</div>
+                  </div>
+                  <div className="bg-gray-700/30 border border-gray-600 rounded-lg p-3 text-center">
+                    <div className="text-2xl font-bold text-gray-400">{syncResult.server_workshops_count - syncResult.added}</div>
+                    <div className="text-sm text-gray-400">{t('mods.skipped')}</div>
+                  </div>
+                  {syncResult.disabled > 0 && (
+                    <div className="bg-amber-900/30 border border-amber-700 rounded-lg p-3 text-center">
+                      <div className="text-2xl font-bold text-amber-400">{syncResult.disabled}</div>
+                      <div className="text-sm text-gray-400">{t('mods.disabled')}</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Server info */}
+                <div className="bg-gray-700/50 rounded-lg p-3 mb-4 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">{t('mods.workshopItems')} ({t('mods.syncFromServer')}):</span>
+                    <span className="text-white font-mono">{syncResult.server_workshops_count}</span>
+                  </div>
+                </div>
+
+                {/* Found mods list */}
+                {syncResult.mods_found.length > 0 && (
+                  <div className="mb-4">
+                    <h4 className="text-sm font-semibold text-gray-300 mb-2">{t('mods.added')}:</h4>
+                    <div className="max-h-48 overflow-y-auto space-y-1">
+                      {syncResult.mods_found.map((mod, idx) => (
+                        <div key={idx} className="bg-gray-700/30 rounded px-3 py-2 text-sm">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-white">{mod.name || `Workshop ${mod.workshop_id}`}</span>
+                            <span className="text-xs px-2 py-1 rounded bg-green-600 text-white">
+                              {mod.status}
+                            </span>
+                          </div>
+                          <div className="text-xs text-gray-400">
+                            Mod IDs: <span className="text-green-400 font-mono">{mod.mod_ids?.join(', ') || '-'}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Errors */}
+                {syncResult.errors.length > 0 && (
+                  <div className="mb-4">
+                    <h4 className="text-sm font-semibold text-red-400 mb-2">{t('mods.errors')}:</h4>
+                    <div className="max-h-32 overflow-y-auto space-y-1">
+                      {syncResult.errors.map((err, idx) => (
+                        <div key={idx} className="text-sm text-red-300 bg-red-900/30 rounded px-3 py-2">
+                          {err}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  onClick={() => setShowSyncResult(false)}
+                  className="w-full bg-cyan-600 hover:bg-cyan-700 text-white py-2 rounded-lg transition"
+                >
+                  {t('common.close')}
+                </button>
+              </>
+            )}
+
+            {/* No new mods message */}
+            {!syncing && syncResult && syncResult.added === 0 && syncResult.mods_found.length === 0 && (
+              <div className="text-center py-4 text-gray-400">
+                <Check size={48} className="mx-auto mb-2 text-green-400" />
+                <p>{t('mods.sync.allUpToDate')}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Import from Line Modal */}
+      {showImportLine && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-gray-800 rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto border border-gray-700">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                <FileText className="text-amber-500" />
+                {t('mods.importLine.title')}
+              </h3>
               <button
-                onClick={() => setShowSyncResult(false)}
-                className="text-gray-400 hover:text-white"
+                onClick={resetImportLine}
+                disabled={importingFromLine}
+                className="text-gray-400 hover:text-white disabled:opacity-50"
               >
                 <X size={24} />
               </button>
             </div>
 
-            {/* Stats */}
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              <div className="bg-green-900/30 border border-green-700 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-green-400">{syncResult.added}</div>
-                <div className="text-sm text-gray-400">{t('mods.added')}</div>
-              </div>
-              <div className="bg-blue-900/30 border border-blue-700 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-blue-400">{syncResult.updated}</div>
-                <div className="text-sm text-gray-400">{t('mods.updated')}</div>
-              </div>
-            </div>
-
-            {/* Server info */}
-            <div className="bg-gray-700/50 rounded-lg p-3 mb-4 text-sm">
-              <div className="flex justify-between">
-                <span className="text-gray-400">{t('mods.serverModsCount')}:</span>
-                <span className="text-white font-mono">{syncResult.server_mods_count}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-400">{t('mods.workshopItems')}:</span>
-                <span className="text-white font-mono">{syncResult.server_workshops_count}</span>
-              </div>
-            </div>
-
-            {/* Found mods list */}
-            {syncResult.mods_found.length > 0 && (
-              <div className="mb-4">
-                <h4 className="text-sm font-semibold text-gray-300 mb-2">{t('mods.found')}:</h4>
-                <div className="max-h-48 overflow-y-auto space-y-1">
-                  {syncResult.mods_found.map((mod, idx) => (
-                    <div key={idx} className="bg-gray-700/30 rounded px-3 py-2 text-sm">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-white">{mod.name || `Workshop ${mod.workshop_id}`}</span>
-                        <span className={`text-xs px-2 py-1 rounded ${
-                          mod.status === 'added' ? 'bg-green-600 text-white' :
-                          mod.status === 'updated' ? 'bg-blue-600 text-white' :
-                          'bg-gray-600 text-gray-300'
-                        }`}>
-                          {mod.status}
-                        </span>
-                      </div>
-                      <div className="text-xs text-gray-400">
-                        Mod IDs: <span className="text-green-400 font-mono">{mod.mod_ids?.join(', ') || '-'}</span>
-                      </div>
-                    </div>
-                  ))}
+            {!importingFromLine && importLineResults.length === 0 && (
+              <>
+                <p className="text-gray-400 text-sm mb-4">{t('mods.importLine.description')}</p>
+                
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    {t('mods.importLine.inputLabel')}
+                  </label>
+                  <textarea
+                    value={importLineText}
+                    onChange={(e) => {
+                      setImportLineText(e.target.value);
+                      // Auto-resize textarea
+                      e.target.style.height = 'auto';
+                      e.target.style.height = Math.min(e.target.scrollHeight, 400) + 'px';
+                    }}
+                    placeholder="WorkshopItems=3627047348;3494474677;2875848298..."
+                    className="w-full min-h-[80px] px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none overflow-hidden"
+                    style={{ height: 'auto' }}
+                  />
                 </div>
+
+                <div className="bg-gray-700/50 rounded-lg p-3 mb-4 text-sm text-gray-400">
+                  <p className="mb-1">{t('mods.importLine.supportedFormats')}:</p>
+                  <code className="block text-amber-400 text-xs">WorkshopItems=123;456;789</code>
+                  <code className="block text-amber-400 text-xs">123;456;789</code>
+                  <code className="block text-amber-400 text-xs">123, 456, 789</code>
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleImportFromLine}
+                    disabled={!importLineText.trim()}
+                    className="flex-1 flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-700 disabled:bg-amber-800 text-white py-2 rounded-lg transition"
+                  >
+                    <Play size={18} />
+                    {t('mods.importLine.start')}
+                  </button>
+                  <button
+                    onClick={resetImportLine}
+                    className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-2 rounded-lg transition"
+                  >
+                    {t('common.cancel')}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* Progress */}
+            {importingFromLine && (
+              <div className="space-y-4">
+                <div className="text-center">
+                  <Loader2 size={48} className="animate-spin text-amber-500 mx-auto mb-4" />
+                  <p className="text-white text-lg mb-2">
+                    {t('mods.importLine.processing')} {importLineProgress.current} / {importLineProgress.total}
+                  </p>
+                  <p className="text-gray-400 text-sm font-mono">
+                    Workshop ID: {importLineProgress.currentId}
+                  </p>
+                </div>
+
+                {/* Progress bar */}
+                <div className="w-full bg-gray-700 rounded-full h-3">
+                  <div 
+                    className="bg-amber-500 h-3 rounded-full transition-all duration-300"
+                    style={{ width: `${(importLineProgress.current / importLineProgress.total) * 100}%` }}
+                  />
+                </div>
+
+                <button
+                  onClick={handleCancelImportLine}
+                  className="w-full bg-red-600 hover:bg-red-700 text-white py-2 rounded-lg transition"
+                >
+                  {t('common.cancel')}
+                </button>
               </div>
             )}
 
-            {/* Errors */}
-            {syncResult.errors.length > 0 && (
-              <div className="mb-4">
-                <h4 className="text-sm font-semibold text-red-400 mb-2">{t('mods.errors')}:</h4>
-                <div className="max-h-32 overflow-y-auto space-y-1">
-                  {syncResult.errors.map((err, idx) => (
-                    <div key={idx} className="text-sm text-red-300 bg-red-900/30 rounded px-3 py-2">
-                      {err}
+            {/* Results */}
+            {importLineResults.length > 0 && (
+              <div className="space-y-4">
+                {/* Stats */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-green-900/30 border border-green-700 rounded-lg p-3 text-center">
+                    <div className="text-2xl font-bold text-green-400">
+                      {importLineResults.filter(r => r.status === 'success').length}
+                    </div>
+                    <div className="text-sm text-gray-400">{t('mods.importLine.success')}</div>
+                  </div>
+                  <div className="bg-red-900/30 border border-red-700 rounded-lg p-3 text-center">
+                    <div className="text-2xl font-bold text-red-400">
+                      {importLineResults.filter(r => r.status === 'error').length}
+                    </div>
+                    <div className="text-sm text-gray-400">{t('mods.importLine.errors')}</div>
+                  </div>
+                </div>
+
+                {/* Results list */}
+                <div className="max-h-64 overflow-y-auto space-y-2">
+                  {importLineResults.map((result, idx) => (
+                    <div 
+                      key={idx} 
+                      className={`rounded-lg px-3 py-2 text-sm ${
+                        result.status === 'success' 
+                          ? 'bg-green-900/30 border border-green-700' 
+                          : 'bg-red-900/30 border border-red-700'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono text-blue-400">{result.workshop_id}</span>
+                        {result.status === 'success' ? (
+                          <Check size={16} className="text-green-400" />
+                        ) : (
+                          <X size={16} className="text-red-400" />
+                        )}
+                      </div>
+                      {result.status === 'success' && (
+                        <div className="text-gray-300 text-xs mt-1">
+                          {result.name || 'Unknown'} 
+                          {result.mod_ids.length > 0 && (
+                            <span className="text-green-400 ml-2">({result.mod_ids.join(', ')})</span>
+                          )}
+                        </div>
+                      )}
+                      {result.status === 'error' && (
+                        <div className="text-red-300 text-xs mt-1">{result.error}</div>
+                      )}
                     </div>
                   ))}
                 </div>
+
+                {!importingFromLine && (
+                  <button
+                    onClick={resetImportLine}
+                    className="w-full bg-amber-600 hover:bg-amber-700 text-white py-2 rounded-lg transition"
+                  >
+                    {t('common.close')}
+                  </button>
+                )}
               </div>
             )}
-
-            <button
-              onClick={() => setShowSyncResult(false)}
-              className="w-full bg-cyan-600 hover:bg-cyan-700 text-white py-2 rounded-lg transition"
-            >
-              {t('common.close')}
-            </button>
           </div>
         </div>
       )}

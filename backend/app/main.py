@@ -1038,6 +1038,69 @@ async def import_server_mods(
     return {"imported": imported, "updated": updated}
 
 
+@app.get("/servers/{server_id}/mods/server-workshop-ids")
+async def get_server_workshop_ids(
+    server_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: str = Depends(get_current_user)
+):
+    """
+    Get list of workshop IDs from server via RCON showoptions.
+    Returns workshop_ids that are NOT yet in the database for this server.
+    """
+    if not rcon_manager.is_connected(server_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Not connected to server {server_id}. Connect first."
+        )
+    
+    try:
+        # Get current server options
+        response = rcon_manager.execute_command(server_id, "showoptions")
+        
+        # Parse WorkshopItems
+        server_workshops = []
+        server_mods = []
+        
+        for line in response.split('\n'):
+            line = line.strip()
+            if 'WorkshopItems=' in line:
+                workshops_part = line.split('WorkshopItems=')[1].strip().strip('"')
+                server_workshops = [w.strip() for w in workshops_part.split(';') if w.strip()]
+            elif 'Mods=' in line:
+                mods_part = line.split('Mods=')[1].strip().strip('"')
+                server_mods = [m.lstrip('\\').strip() for m in mods_part.split(';') if m.strip()]
+        
+        # Get existing workshop IDs from database
+        result = await db.execute(
+            select(ServerMod.workshop_id).where(ServerMod.server_id == server_id)
+        )
+        existing_workshop_ids = set(row[0] for row in result.fetchall())
+        
+        # Filter out already existing ones
+        new_workshop_ids = [wid for wid in server_workshops if wid not in existing_workshop_ids]
+        existing_on_server = [wid for wid in server_workshops if wid in existing_workshop_ids]
+        
+        # Create workshop_id -> mod_id mapping for existing ones that need update
+        workshop_to_mod = {}
+        for i, wid in enumerate(server_workshops):
+            if i < len(server_mods):
+                workshop_to_mod[wid] = server_mods[i]
+        
+        return {
+            "new_workshop_ids": new_workshop_ids,
+            "existing_workshop_ids": existing_on_server,
+            "workshop_to_mod": workshop_to_mod,
+            "total_on_server": len(server_workshops)
+        }
+        
+    except RCONError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"RCON error: {str(e)}"
+        )
+
+
 @app.post("/servers/{server_id}/mods/sync")
 async def sync_mods_from_server(
     server_id: int,
