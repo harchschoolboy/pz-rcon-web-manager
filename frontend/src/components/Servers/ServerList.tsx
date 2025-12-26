@@ -226,7 +226,7 @@ const ServerForm: React.FC<ServerFormProps> = ({ onClose, onSuccess }) => {
     host: '',
     port: 27015,
     password: '',
-    username: '',
+    username: 'admin',
   });
   const [loading, setLoading] = useState(false);
 
@@ -342,7 +342,7 @@ const ServerEditForm: React.FC<ServerEditFormProps> = ({ server, onClose, onSucc
     host: server.host,
     port: server.port,
     password: '',
-    username: server.username || '',
+    username: server.username || 'admin',
   });
   const [loading, setLoading] = useState(false);
 
@@ -356,7 +356,7 @@ const ServerEditForm: React.FC<ServerEditFormProps> = ({ server, onClose, onSucc
         name: formData.name,
         host: formData.host,
         port: formData.port,
-        username: formData.username || null,
+        username: formData.username || 'admin',
       };
       if (formData.password) {
         updateData.password = formData.password;

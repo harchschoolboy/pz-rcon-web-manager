@@ -10,7 +10,7 @@ import {
 
 export const ModsManager: React.FC = () => {
   const { t } = useI18n();
-  const { selectedServerId, getSelectedServer } = useServerStore();
+  const { selectedServerId, servers } = useServerStore();
   const [mods, setMods] = useState<Mod[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -408,23 +408,51 @@ export const ModsManager: React.FC = () => {
     
     try {
       const data = await modsAPI.export(selectedServerId);
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
+      const jsonStr = JSON.stringify(data, null, 2);
       
-      // Generate filename: connection_name_date_time.json
-      const server = getSelectedServer();
-      const serverName = server?.name?.replace(/[^a-zA-Z0-9а-яА-ЯіІїЇєЄ]/g, '_') || `server_${selectedServerId}`;
+      const server = servers.find(s => s.id === selectedServerId);
+      const serverName = server?.name?.replace(/[^a-zA-Z0-9а-яА-ЯіІїЇєЄ_-]/g, '_') || `server_${selectedServerId}`;
       const now = new Date();
-      const dateStr = now.toISOString().slice(0, 10); // YYYY-MM-DD
-      const timeStr = now.toTimeString().slice(0, 8).replace(/:/g, '-'); // HH-MM-SS
-      a.download = `${serverName}_${dateStr}_${timeStr}.json`;
+      const filename = `${serverName}_${now.toISOString().slice(0, 10)}_${now.toTimeString().slice(0, 8).replace(/:/g, '-')}.json`;
       
-      a.click();
-      URL.revokeObjectURL(url);
+      // Check if running in pywebview (exe mode) or browser
+      const isExeMode = !!(window as any).pywebview;
+      
+      if (isExeMode) {
+        // Exe mode: save to local exports folder
+        const token = localStorage.getItem('auth_token');
+        const response = await fetch('/api/export-file', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ filename, content: jsonStr })
+        });
+        
+        if (response.ok) {
+          const result = await response.json();
+          alert(t('mods.exportSuccess') || `Exported to: ${result.path}`);
+        } else {
+          const errorText = await response.text();
+          console.error('Export error:', response.status, errorText);
+          throw new Error(errorText || 'Export failed');
+        }
+      } else {
+        // Browser mode: download via blob
+        const blob = new Blob([jsonStr], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
     } catch (err: any) {
-      setError(err.response?.data?.detail || t('mods.exportError'));
+      console.error('Export exception:', err);
+      setError(err.message || err.response?.data?.detail || t('mods.exportError'));
     }
   };
 

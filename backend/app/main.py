@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List, Dict, Set, Optional
@@ -47,6 +47,28 @@ app = FastAPI(
     description="Backend API for Project Zomboid Server Management",
     version="0.1.0"
 )
+
+
+def server_to_response(server: Server) -> dict:
+    """Convert server model to response dict with decrypted username"""
+    username = None
+    if server.username:
+        try:
+            username = crypto_service.decrypt(server.username)
+        except:
+            username = "admin"  # Fallback if decryption fails
+    
+    return {
+        "id": server.id,
+        "name": server.name,
+        "host": server.host,
+        "port": server.port,
+        "username": username or "admin",
+        "is_active": server.is_active,
+        "created_at": server.created_at,
+        "updated_at": server.updated_at
+    }
+
 
 # CORS configuration
 app.add_middleware(
@@ -118,8 +140,16 @@ ws_manager = ConnectionManager()
 
 
 # Static files - serve React build
-STATIC_DIR = Path(__file__).parent.parent / "static"
-if STATIC_DIR.exists():
+# Support both development and PyInstaller exe paths
+def get_static_dir() -> Path:
+    """Get static files directory, works for dev and PyInstaller"""
+    import os
+    if os.environ.get('PZ_STATIC_DIR'):
+        return Path(os.environ['PZ_STATIC_DIR'])
+    return Path(__file__).parent.parent / "static"
+
+STATIC_DIR = get_static_dir()
+if STATIC_DIR.exists() and (STATIC_DIR / "assets").exists():
     app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
 
 
@@ -139,6 +169,37 @@ async def shutdown_event():
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok", "service": "PZ WebAdmin API"}
+
+
+# ============= File Export =============
+
+from pydantic import BaseModel as PydanticBaseModel
+
+class ExportFileRequest(PydanticBaseModel):
+    filename: str
+    content: str
+
+@app.post("/api/export-file")
+async def export_file(
+    request: ExportFileRequest,
+    current_user: str = Depends(get_current_user)
+):
+    """Save export file to exports folder"""
+    import os
+    
+    # Get exports directory (next to data folder)
+    data_dir = Path(os.environ.get('PZ_DATA_DIR', '/data'))
+    exports_dir = data_dir.parent / 'exports' if os.environ.get('PZ_DATA_DIR') else Path('/data/exports')
+    exports_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Sanitize filename
+    safe_filename = re.sub(r'[^a-zA-Z0-9а-яА-ЯіІїЇєЄ._-]', '_', request.filename)
+    filepath = exports_dir / safe_filename
+    
+    # Write file
+    filepath.write_text(request.content, encoding='utf-8')
+    
+    return {"success": True, "path": str(filepath)}
 
 
 # ============= Authentication =============
@@ -332,7 +393,7 @@ async def create_server(
     await db.commit()
     await db.refresh(db_server)
     
-    return db_server
+    return server_to_response(db_server)
 
 
 @app.get("/servers", response_model=List[ServerResponse])
@@ -349,7 +410,7 @@ async def list_servers(
     result = await db.execute(query.order_by(Server.name))
     servers = result.scalars().all()
     
-    return servers
+    return [server_to_response(s) for s in servers]
 
 
 @app.get("/servers/{server_id}", response_model=ServerResponse)
@@ -370,7 +431,7 @@ async def get_server(
             detail=f"Server with ID {server_id} not found"
         )
     
-    return server
+    return server_to_response(server)
 
 
 @app.put("/servers/{server_id}", response_model=ServerResponse)
@@ -411,7 +472,7 @@ async def update_server(
     await db.commit()
     await db.refresh(server)
     
-    return server
+    return server_to_response(server)
 
 
 @app.delete("/servers/{server_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -982,6 +1043,57 @@ async def export_server_mods(
             )
             for mod in mods
         ]
+    )
+
+
+@app.get("/servers/{server_id}/mods/download")
+async def download_server_mods(
+    server_id: int,
+    token: str = Query(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """Download mods as JSON file"""
+    # Verify token manually since we get it from query param
+    try:
+        verify_token(token)
+    except:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
+    # Get server name for filename
+    server_result = await db.execute(select(Server).where(Server.id == server_id))
+    server = server_result.scalar_one_or_none()
+    server_name = server.name if server else f"server_{server_id}"
+    # Sanitize filename
+    server_name = re.sub(r'[^a-zA-Z0-9а-яА-ЯіІїЇєЄ_-]', '_', server_name)
+    
+    result = await db.execute(
+        select(ServerMod).where(ServerMod.server_id == server_id)
+    )
+    mods = result.scalars().all()
+    
+    export_data = {
+        "mods": [
+            {
+                "workshop_id": mod.workshop_id,
+                "mod_ids": mod.mod_ids.split(';') if mod.mod_ids else [],
+                "enabled_mod_ids": mod.enabled_mod_ids.split(';') if mod.enabled_mod_ids else [],
+                "name": mod.name,
+                "is_enabled": mod.is_enabled
+            }
+            for mod in mods
+        ]
+    }
+    
+    from datetime import datetime
+    now = datetime.now()
+    filename = f"{server_name}_{now.strftime('%Y-%m-%d_%H-%M-%S')}.json"
+    
+    return Response(
+        content=json.dumps(export_data, indent=2, ensure_ascii=False),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
     )
 
 
