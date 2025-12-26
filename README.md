@@ -86,6 +86,12 @@ docker run -d \
 ## FYI
 If you run app in docker in WSL on windows to access local server, use host.docker.internal instead of localhost
 
+Mod page shows APP state of Mods, not Server State. To update APP state of mods, use SYNC button.
+
+Sync button will merge lists, and all mods currently present on server will be in enabled state.
+
+Currently if workshop id have multiple mods, but server have enabled only one mod, you will see only one ModID on Mod Page, if you want have multiple ids, remove it from app, and add as new, in this case, it will be added to APP with all modIds.
+
 If your 8000 is busy, change 
     ports:
       - "8000:8000"
