@@ -1,6 +1,6 @@
-# PZ WebAdmin - Frontend
+# PZ Rcon Manager - Frontend
 
-React + TypeScript frontend для PZ WebAdmin
+React + TypeScript frontend для PZ Rcon Manager
 
 ## Швидкий старт
 

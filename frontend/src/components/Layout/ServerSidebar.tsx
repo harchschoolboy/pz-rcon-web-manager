@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { serverAPI, connectionAPI } from '../../api/client';
+import { serverAPI, connectionAPI, commandAPI } from '../../api/client';
 import { useServerStore } from '../../store/serverStore';
 import { useI18n } from '../../i18n';
 import { 
   Server as ServerIcon, Plus, Trash2, Power, PowerOff, Edit, 
-  ChevronLeft, ChevronRight, X, Users
+  ChevronLeft, ChevronRight, X, Users, RotateCcw
 } from 'lucide-react';
 import type { Server } from '../../types/api';
 
@@ -18,11 +18,13 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
   onToggleCollapse 
 }) => {
   const { t } = useI18n();
-  const { servers, setServers, addServer, updateServer, removeServer, selectServer, selectedServerId, playersOnline, connectionStatus } = useServerStore();
+  const { servers, setServers, addServer, updateServer, removeServer, selectServer, selectedServerId, playersOnline, setConnectionStatus } = useServerStore();
   const [loading, setLoading] = useState(true);
   const [connectionStatuses, setConnectionStatuses] = useState<Record<number, boolean>>({});
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingServer, setEditingServer] = useState<Server | null>(null);
+  const [restartingServerId, setRestartingServerId] = useState<number | null>(null);
+  const [showRestartConfirm, setShowRestartConfirm] = useState<number | null>(null);
   
   // Form state
   const [formData, setFormData] = useState({
@@ -79,6 +81,35 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
       await checkConnection(serverId);
     } catch (error: any) {
       alert(`${t('error.disconnecting')}: ${error.response?.data?.detail || error.message}`);
+    }
+  };
+
+  const handleRestart = async (serverId: number) => {
+    setRestartingServerId(serverId);
+    setShowRestartConfirm(null);
+    
+    try {
+      // Step 1: Save the server
+      const saveResult = await commandAPI.execute(serverId, 'save');
+      const saveResponse = saveResult.response?.toLowerCase() || '';
+      if (saveResponse.includes('error') || saveResponse.includes('fail')) {
+        throw new Error('Save command failed');
+      }
+      
+      // Wait a bit for save to complete
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Step 2: Quit (restart) the server
+      await commandAPI.execute(serverId, 'quit');
+      
+      // Server will disconnect
+      setConnectionStatus('disconnected');
+      await checkConnection(serverId);
+    } catch (err) {
+      console.error('Restart failed:', err);
+      alert(t('connection.restartFailed'));
+    } finally {
+      setRestartingServerId(null);
     }
   };
 
@@ -231,7 +262,8 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
             servers.map((server) => {
               const isConnected = connectionStatuses[server.id];
               const isSelected = selectedServerId === server.id;
-              const showPlayers = isSelected && isConnected && connectionStatus === 'connected' && playersOnline;
+              // Show players if server is selected and we have player data
+              const showPlayers = isSelected && playersOnline !== null;
 
               return (
                 <div
@@ -271,13 +303,23 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
 
                   <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
                     {isConnected ? (
-                      <button
-                        onClick={() => handleDisconnect(server.id)}
-                        className="flex-1 flex items-center justify-center gap-1 bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded text-xs transition"
-                      >
-                        <PowerOff size={12} />
-                        {t('connection.disconnect')}
-                      </button>
+                      <>
+                        <button
+                          onClick={() => handleDisconnect(server.id)}
+                          className="flex-1 flex items-center justify-center gap-1 bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded text-xs transition"
+                        >
+                          <PowerOff size={12} />
+                          {t('connection.disconnect')}
+                        </button>
+                        <button
+                          onClick={() => setShowRestartConfirm(server.id)}
+                          disabled={restartingServerId === server.id}
+                          className="p-1 bg-orange-600 hover:bg-orange-700 disabled:bg-orange-800 text-white rounded transition"
+                          title={t('connection.restart')}
+                        >
+                          <RotateCcw size={12} className={restartingServerId === server.id ? 'animate-spin' : ''} />
+                        </button>
+                      </>
                     ) : (
                       <button
                         onClick={() => handleConnect(server.id)}
@@ -300,12 +342,6 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
                       <Trash2 size={12} />
                     </button>
                   </div>
-
-                  {isSelected && (
-                    <div className="mt-2 text-xs text-blue-400">
-                      ✓ {t('servers.selected')}
-                    </div>
-                  )}
                 </div>
               );
             })
@@ -424,6 +460,34 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Restart Confirmation Modal */}
+      {showRestartConfirm !== null && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-gray-800 rounded-lg p-6 max-w-sm mx-4 border border-gray-700">
+            <h3 className="text-lg font-semibold text-white mb-2">
+              {t('connection.restartConfirm')}
+            </h3>
+            <p className="text-gray-400 text-sm mb-4">
+              {t('connection.restartDesc')}
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowRestartConfirm(null)}
+                className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded transition"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                onClick={() => handleRestart(showRestartConfirm)}
+                className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded transition"
+              >
+                {t('connection.restart')}
+              </button>
+            </div>
           </div>
         </div>
       )}

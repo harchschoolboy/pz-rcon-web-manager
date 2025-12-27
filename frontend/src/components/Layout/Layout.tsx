@@ -2,8 +2,7 @@ import React, { useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
 import { useI18n } from '../../i18n';
-import { Terminal, LogOut, User, Settings, Package } from 'lucide-react';
-import { ConnectionIndicator } from '../Connection/ConnectionIndicator';
+import { Terminal, LogOut, User, Settings, Package, Info } from 'lucide-react';
 import { LanguageSwitcher } from '../UI/LanguageSwitcher';
 import { ServerSidebar } from './ServerSidebar';
 import { useWebSocket } from '../../hooks/useWebSocket';
@@ -26,6 +25,7 @@ export const Layout: React.FC = () => {
     { path: '/console', label: t('sidebar.console'), icon: Terminal },
     { path: '/settings', label: t('sidebar.settings'), icon: Settings },
     { path: '/mods', label: t('sidebar.mods'), icon: Package },
+    { path: '/about', label: t('sidebar.about'), icon: Info },
   ];
 
   return (
@@ -37,7 +37,7 @@ export const Layout: React.FC = () => {
             <div className="flex items-center gap-8">
               <Link to="/" className="text-xl font-bold text-white flex items-center gap-2">
                 <Terminal className="text-blue-500" />
-                PZ WebAdmin
+                PZ Rcon Manager
               </Link>
 
               <nav className="hidden md:flex gap-1">
@@ -90,13 +90,6 @@ export const Layout: React.FC = () => {
 
         {/* Content Area */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Connection Indicator Bar */}
-          <div className="bg-gray-800/30 border-b border-gray-700/50">
-            <div className="px-4 py-2">
-              <ConnectionIndicator />
-            </div>
-          </div>
-
           {/* Main Content */}
           <main className="flex-1 overflow-y-auto p-6">
             <Outlet />
@@ -108,7 +101,7 @@ export const Layout: React.FC = () => {
       <footer className="border-t border-gray-700 bg-gray-800/30">
         <div className="px-4 py-4">
           <p className="text-center text-gray-500 text-sm">
-            PZ WebAdmin © 2025 | Project Zomboid Server Management
+            PZ Rcon Manager © 2025 | Project Zomboid Server Management
           </p>
         </div>
       </footer>
