@@ -88,8 +88,8 @@ Download `pz_webadmin.exe` from [Releases](https://github.com/harchschoolboy/pz-
 - If running in Docker on WSL (Windows), use `host.docker.internal` instead of `localhost` to access local server
 - **Mod page shows APP state**, not server state. Use SYNC button to update from server
 - SYNC merges lists — all mods from server will be added in enabled state
-- If workshop item has multiple ModIDs but server has only one enabled, you'll see only that one. To see all ModIDs, remove the mod and add it again
 - Port conflict? Change `"8000:8000"` to `"your_port:8000"` in docker-compose
+- App parses workshop pages to find ModIds and stuff, so if workshop page is messed up, it can show you error. You can always add mod manually.
 
 ## Screenshots
 
