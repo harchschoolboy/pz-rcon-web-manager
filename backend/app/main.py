@@ -199,7 +199,33 @@ async def export_file(
     # Write file
     filepath.write_text(request.content, encoding='utf-8')
     
-    return {"success": True, "path": str(filepath)}
+    return {"success": True, "path": str(filepath), "directory": str(exports_dir)}
+
+
+@app.post("/api/open-exports-folder")
+async def open_exports_folder(
+    current_user: str = Depends(get_current_user)
+):
+    """Open exports folder in system file explorer (Windows only)"""
+    import os
+    import subprocess
+    import sys
+    
+    # Get exports directory
+    data_dir = Path(os.environ.get('PZ_DATA_DIR', '/data'))
+    exports_dir = data_dir.parent / 'exports' if os.environ.get('PZ_DATA_DIR') else Path('/data/exports')
+    exports_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Only works on Windows
+    if sys.platform == 'win32':
+        try:
+            # Open Explorer at the exports folder
+            subprocess.Popen(['explorer', str(exports_dir)])
+            return {"success": True, "path": str(exports_dir)}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    else:
+        return {"success": False, "error": "Only supported on Windows"}
 
 
 # ============= Authentication =============
