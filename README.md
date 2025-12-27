@@ -1,6 +1,8 @@
-# PZ WebAdmin
+# PZ Rcon Manager
 
 Web-based administration panel for Project Zomboid dedicated servers. Manage your servers, mods, and settings through a modern web interface using RCON protocol.
+
+> ⚠️ **Disclaimer**: This software is provided "as is", without warranty of any kind. Use at your own risk. The author is not responsible for any damage to your servers, data loss, corrupted save files, or any other issues that may arise from using this application. Always backup your server data before making changes.
 
 ## Features
 
@@ -11,41 +13,30 @@ Web-based administration panel for Project Zomboid dedicated servers. Manage you
 - **Authentication** — secure access with username/password
 - **Real-time status** — WebSocket-based connection status and player count
 
-## Tech Stack
+## What This App CAN Do
 
-- **Backend**: Python, FastAPI, SQLAlchemy, SQLite
-- **Frontend**: React, TypeScript, Tailwind CSS, Zustand
-- **Deployment**: Single Docker image (~150MB)
+✅ Connect to PZ servers via RCON protocol  
+✅ Send any RCON command to the server  
+✅ Manage mod lists (add/remove/enable/disable mods in the app)  
+✅ Sync current server mod configuration to the app  
+✅ Apply mod configuration to server (`setaccesslevel`, `Mods=`, `WorkshopItems=`)  
+✅ Export/import mod configurations as JSON files  
+✅ Store multiple server connections  
+✅ Work with mods from Steam Workshop (by URL or ID)  
+✅ Restart server using save/quit sequence to RCON
 
-## Quick Start (Local Build)
+## What This App CANNOT Do
 
-1. Clone the repository:
-```bash
-git clone https://github.com/harchschoolboy/pz-rcon-web-manager.git
-cd pz-rcon-web-manager
-```
+❌ Download or install mods — only manages mod IDs, actual download happens on server restart  
+❌ Manage mod collections — only individual mods are supported  
+❌ Pull mod dependencies automatically — you need to add each mod manually  
+❌ Edit server files directly — only RCON commands are used  
+❌ Upload maps or custom content — only workshop items  
+❌ Work without RCON enabled on the server  
 
-2. (Optional) Create `.env` file to customize settings:
-```bash
-cp .env.example .env
-```
+## Quick Start
 
-```env
-AUTH_USERNAME=admin
-AUTH_PASSWORD=your_secure_password
-# JWT_SECRET and ENCRYPTION_KEY are auto-generated if not provided
-```
-
-3. Run:
-```bash
-docker-compose up -d 
-```
-
-4. Open http://localhost:8000 and login with your credentials.
-
-> **Note**: `ENCRYPTION_KEY` and `JWT_SECRET` are automatically generated on first run and saved to `/data/.encryption_key` and `/data/.jwt_secret`. You only need to set them manually if you want to use specific values or migrate data between instances.
-
-## Quick Start (Docker Hub)
+### Docker (Recommended)
 
 ```bash
 docker run -d \
@@ -57,77 +48,71 @@ docker run -d \
   harchschoolboy/pz-rcon-server-manager:latest
 ```
 
-> **Note**: Keys are auto-generated and stored in the `/data` volume.
+Open http://localhost:8000 and login with your credentials.
 
-## Environment Variables
+### Docker Compose
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `AUTH_USERNAME` | Admin panel username | `admin` |
-| `AUTH_PASSWORD` | Admin panel password | `admin` |
-| `JWT_SECRET` | Secret key for JWT tokens | Auto-generated |
-| `JWT_EXPIRE_HOURS` | Token expiration time | `24` |
-| `ENCRYPTION_KEY` | Key for encrypting RCON passwords | Auto-generated |
-| `DATABASE_URL` | SQLite database path | `sqlite+aiosqlite:////data/pz_webadmin.db` |
+```yaml
+version: '3.8'
+services:
+  pz-webadmin:
+    image: harchschoolboy/pz-rcon-server-manager:latest
+    container_name: pz-webadmin
+    ports:
+      - "8000:8000"
+    environment:
+      - AUTH_USERNAME=admin
+      - AUTH_PASSWORD=your_secure_password
+    volumes:
+      - pz_webadmin_data:/data
+    restart: unless-stopped
 
-> **Security Note**: Auto-generated keys are saved to `/data/.encryption_key` and `/data/.jwt_secret`. If you delete these files, new keys will be generated, but existing encrypted passwords will become unreadable and active sessions will be invalidated.
+volumes:
+  pz_webadmin_data:
+```
+
+### Windows EXE
+
+Download `pz_webadmin.exe` from [Releases](https://github.com/harchschoolboy/pz-rcon-web-manager/releases), run it, and a browser window will open automatically.
 
 ## Usage
 
 1. **Add a server** — go to Connections tab, click "Add Server", enter RCON host, port, and password
 2. **Connect** — click on the server and press Connect button
 3. **Manage mods** — go to Mods tab, paste Steam Workshop URL to add mods
-4. **Apply mods** — select mods to enable and click Apply to send configuration to server
+4. **Sync mods** — click SYNC to fetch current mod configuration from server
+5. **Apply mods** — select mods to enable and click Apply to send configuration to server
 
-## Build Standalone EXE (Windows)
+## Important Notes
 
-You can build a standalone Windows executable that doesn't require Docker or Python:
+- If running in Docker on WSL (Windows), use `host.docker.internal` instead of `localhost` to access local server
+- **Mod page shows APP state**, not server state. Use SYNC button to update from server
+- SYNC merges lists — all mods from server will be added in enabled state
+- If workshop item has multiple ModIDs but server has only one enabled, you'll see only that one. To see all ModIDs, remove the mod and add it again
+- Port conflict? Change `"8000:8000"` to `"your_port:8000"` in docker-compose
 
-### Prerequisites
-- Python 3.11+
-- Node.js 18+
+## Screenshots
 
-### Build
-```bash
-# Run the build script
-build.bat
-```
+<img width="2560" height="1279" alt="PZ Rcon Manager Interface" src="https://github.com/user-attachments/assets/470d4a1f-1577-43d5-b05f-b1e82061d774" />
 
-This will:
-1. Build the React frontend
-2. Bundle it with the Python backend
-3. Create `dist/pz_webadmin.exe` (~50-100MB)
+## Technical Details
 
-### Run
-1. Copy `pz_webadmin.exe` to desired location
-2. (Optional) Create `.env` file next to exe with custom settings
-3. Run `pz_webadmin.exe`
-4. A browser window will open automatically
+See [TECHNICAL.md](TECHNICAL.md) for:
+- Architecture and tech stack
+- Environment variables
+- API endpoints
+- Build instructions
+- Development setup
 
-Data and auto-generated keys will be stored in `data/` folder next to the executable.
+## Links
 
-## FYI
-If you run app in docker in WSL on windows to access local server, use host.docker.internal instead of localhost
-
-Mod page shows APP state of Mods, not Server State. To update APP state of mods from server, use SYNC button.
-
-Sync button will merge lists, and all mods currently present on server will be in enabled state.
-
-Currently if workshop id have multiple mods, but server have enabled only one mod, you will see only one ModID on Mod Page, if you want have multiple ids, remove it from app, and add as new, in this case, it will be added to APP with all modIds.
-
-If your 8000 is busy, change 
-    ports:
-      - "8000:8000"
-to
-    ports:
-      - "your_port:8000"
-
-<img width="2560" height="1279" alt="image" src="https://github.com/user-attachments/assets/470d4a1f-1577-43d5-b05f-b1e82061d774" />
-
+- **Docker Hub**: [harchschoolboy/pz-rcon-server-manager](https://hub.docker.com/r/harchschoolboy/pz-rcon-server-manager)
+- **GitHub**: [harchschoolboy/pz-rcon-web-manager](https://github.com/harchschoolboy/pz-rcon-web-manager)
+- **Issues**: [Report a bug](https://github.com/harchschoolboy/pz-rcon-web-manager/issues)
 
 ## License
 
-GPL
+GPL-3.0
 
 
 

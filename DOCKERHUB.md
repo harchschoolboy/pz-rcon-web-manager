@@ -1,4 +1,4 @@
-# PZ WebAdmin
+# PZ Rcon Manager
 
 Web-based administration panel for **Project Zomboid** dedicated servers. Manage your servers, mods, and settings through a modern web interface using RCON protocol.
 

@@ -972,7 +972,7 @@ export const ModsManager: React.FC = () => {
                         type="text"
                         value={manualWorkshopId}
                         onChange={(e) => setManualWorkshopId(e.target.value)}
-                        placeholder="2917021415"
+                        placeholder="WorkshopId - 1234567890"
                         className="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-blue-400 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
                       <button
@@ -993,7 +993,7 @@ export const ModsManager: React.FC = () => {
                       type="text"
                       value={manualModId}
                       onChange={(e) => setManualModId(e.target.value)}
-                      placeholder="vac"
+                      placeholder="ModId - modname"
                       className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-green-400 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
