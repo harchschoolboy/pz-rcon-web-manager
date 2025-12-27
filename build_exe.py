@@ -110,7 +110,7 @@ def main():
     try:
         import webview
         window = webview.create_window(
-            'PZ WebAdmin',
+            'PZ Rcon Manager',
             url,
             width=1400,
             height=900,

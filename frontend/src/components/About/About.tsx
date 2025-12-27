@@ -2,7 +2,7 @@ import React from 'react';
 import { useI18n } from '../../i18n';
 import { Info, Github, Container, Check, X, ExternalLink } from 'lucide-react';
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.1.1';
 
 export const About: React.FC = () => {
   const { t } = useI18n();

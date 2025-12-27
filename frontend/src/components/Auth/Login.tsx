@@ -38,7 +38,7 @@ export const Login: React.FC = () => {
       <div className="max-w-md w-full mx-4">
         <div className="bg-gray-800 rounded-lg shadow-2xl p-8 border border-gray-700">
           <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-white mb-2">PZ WebAdmin</h1>
+            <h1 className="text-3xl font-bold text-white mb-2">PZ Rcon Manager</h1>
             <p className="text-gray-400">Project Zomboid Server Management</p>
           </div>
 

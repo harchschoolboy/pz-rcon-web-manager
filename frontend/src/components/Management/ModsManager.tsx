@@ -432,6 +432,20 @@ export const ModsManager: React.FC = () => {
         
         if (response.ok) {
           const result = await response.json();
+          
+          // Open exports folder in Explorer
+          try {
+            await fetch('/api/open-exports-folder', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+              }
+            });
+          } catch (e) {
+            console.log('Could not open folder:', e);
+          }
+          
           alert(t('mods.exportSuccess') || `Exported to: ${result.path}`);
         } else {
           const errorText = await response.text();
