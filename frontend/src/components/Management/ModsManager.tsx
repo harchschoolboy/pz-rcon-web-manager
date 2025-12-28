@@ -1,11 +1,11 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { modsAPI, Mod, SyncModsResponse } from '../../api/client';
+import { modsAPI, Mod, SyncModsResponse, ModDependency } from '../../api/client';
 import { useServerStore } from '../../store/serverStore';
 import { useI18n } from '../../i18n';
 import { 
   Package, RefreshCw, ExternalLink, AlertCircle, Search, 
   Plus, Trash2, Download, Upload, Play, Loader2, Check, X,
-  Link, DownloadCloud, ChevronDown, ChevronRight, FileText
+  Link, DownloadCloud, ChevronDown, ChevronRight, FileText, AlertTriangle
 } from 'lucide-react';
 
 export const ModsManager: React.FC = () => {
@@ -22,7 +22,7 @@ export const ModsManager: React.FC = () => {
   const [addMode, setAddMode] = useState<'url' | 'manual'>('url');
   const [addUrl, setAddUrl] = useState('');
   const [parsing, setParsing] = useState(false);
-  const [parsedMod, setParsedMod] = useState<{ workshop_id: string; mod_ids: string[]; name: string | null } | null>(null);
+  const [parsedMod, setParsedMod] = useState<{ workshop_id: string; mod_ids: string[]; name: string | null; dependencies: ModDependency[] } | null>(null);
   const [selectedModIds, setSelectedModIds] = useState<string[]>([]);
   const [manualModId, setManualModId] = useState('');
   const [manualWorkshopId, setManualWorkshopId] = useState('');
@@ -45,6 +45,13 @@ export const ModsManager: React.FC = () => {
   const [importLineProgress, setImportLineProgress] = useState({ current: 0, total: 0, currentId: '' });
   const [importLineResults, setImportLineResults] = useState<Array<{ workshop_id: string; name?: string; mod_ids: string[]; status: 'success' | 'error'; error?: string }>>([]);
   const importAbortRef = useRef(false);
+  
+  // Import from collection state
+  const [showImportCollection, setShowImportCollection] = useState(false);
+  const [collectionUrl, setCollectionUrl] = useState('');
+  const [importingCollection, setImportingCollection] = useState(false);
+  const [parsingCollection, setParsingCollection] = useState(false);
+  const [collectionInfo, setCollectionInfo] = useState<{ name: string | null; modsCount: number } | null>(null);
 
   useEffect(() => {
     if (selectedServerId) {
@@ -125,8 +132,31 @@ export const ModsManager: React.FC = () => {
       }
       
       try {
-        // Add ONE record with all mod_ids
-        // selectedModIds determines which are enabled
+        // First add all dependencies
+        if (parsedMod.dependencies && parsedMod.dependencies.length > 0) {
+          for (const dep of parsedMod.dependencies) {
+            try {
+              // Parse each dependency to get its mod_ids
+              const depUrl = `https://steamcommunity.com/sharedfiles/filedetails/?id=${dep.workshop_id}`;
+              const depResult = await modsAPI.parse(depUrl);
+              
+              await modsAPI.add(selectedServerId, {
+                workshop_id: dep.workshop_id,
+                mod_ids: depResult.mod_ids,
+                enabled_mod_ids: depResult.mod_ids, // Enable all by default
+                name: depResult.name || dep.name || undefined,
+                is_enabled: true
+              });
+            } catch (depErr: any) {
+              // Skip if dependency already exists (409 conflict)
+              if (depErr.response?.status !== 409) {
+                console.warn(`Failed to add dependency ${dep.workshop_id}:`, depErr);
+              }
+            }
+          }
+        }
+        
+        // Then add the main mod
         await modsAPI.add(selectedServerId, {
           workshop_id: parsedMod.workshop_id,
           mod_ids: allModIds,
@@ -234,6 +264,28 @@ export const ModsManager: React.FC = () => {
       setMods(mods.filter(m => m.id !== mod.id));
     } catch (err: any) {
       setError(err.response?.data?.detail || t('mods.deleteError'));
+    }
+  };
+
+  const handleClearAllMods = async () => {
+    if (!selectedServerId) return;
+    if (mods.length === 0) return;
+    
+    const confirmText = t('mods.clearAllConfirm').replace('{count}', mods.length.toString());
+    if (!confirm(confirmText)) return;
+    
+    setLoading(true);
+    try {
+      // Delete all mods one by one
+      for (const mod of mods) {
+        await modsAPI.delete(selectedServerId, mod.id);
+      }
+      setMods([]);
+    } catch (err: any) {
+      setError(err.response?.data?.detail || t('mods.deleteError'));
+      loadMods(); // Reload to get current state
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -387,6 +439,17 @@ export const ModsManager: React.FC = () => {
 
   const handleApplyMods = async () => {
     if (!selectedServerId) return;
+    
+    // Get counts for confirmation
+    const workshopCount = mods.filter(m => m.is_enabled).length;
+    const modIdCount = mods.filter(m => m.is_enabled).reduce((acc, m) => acc + m.enabled_mod_ids.length, 0);
+    
+    // Show confirmation
+    const confirmMsg = enabledCount === 0 
+      ? t('mods.applyConfirmEmpty')
+      : t('mods.applyConfirm').replace('{mods}', String(modIdCount)).replace('{workshops}', String(workshopCount));
+    
+    if (!confirm(confirmMsg)) return;
     
     setApplying(true);
     setApplyResult(null);
@@ -580,6 +643,101 @@ export const ModsManager: React.FC = () => {
     importAbortRef.current = false;
   };
 
+  const handleImportCollection = async () => {
+    if (!selectedServerId || !collectionUrl.trim()) return;
+    
+    setParsingCollection(true);
+    setCollectionInfo(null);
+    setImportLineResults([]);
+    setImportLineProgress({ current: 0, total: 0, currentId: '' });
+    importAbortRef.current = false;
+    
+    try {
+      // Parse collection - this takes time, show progress
+      const collection = await modsAPI.parseCollection(collectionUrl);
+      
+      if (!collection.mods || collection.mods.length === 0) {
+        setError(t('mods.collection.noMods'));
+        setParsingCollection(false);
+        return;
+      }
+      
+      // Show collection info
+      setCollectionInfo({ name: collection.name, modsCount: collection.mods.length });
+      setParsingCollection(false);
+      setImportingCollection(true);
+      setImportLineProgress({ current: 0, total: collection.mods.length, currentId: '' });
+      
+      const results: typeof importLineResults = [];
+      
+      for (let i = 0; i < collection.mods.length; i++) {
+        if (importAbortRef.current) break;
+        
+        const mod = collection.mods[i];
+        setImportLineProgress({ current: i + 1, total: collection.mods.length, currentId: mod.workshop_id });
+        
+        try {
+          await modsAPI.add(selectedServerId, {
+            workshop_id: mod.workshop_id,
+            mod_ids: mod.mod_ids,
+            enabled_mod_ids: mod.mod_ids, // Enable all by default
+            name: mod.name || undefined,
+            is_enabled: true
+          });
+          
+          results.push({
+            workshop_id: mod.workshop_id,
+            name: mod.name || undefined,
+            mod_ids: mod.mod_ids,
+            status: 'success'
+          });
+        } catch (err: any) {
+          // Skip if already exists (409 conflict)
+          if (err.response?.status === 409) {
+            results.push({
+              workshop_id: mod.workshop_id,
+              name: mod.name || undefined,
+              mod_ids: mod.mod_ids,
+              status: 'success',
+              error: 'Already exists'
+            });
+          } else {
+            results.push({
+              workshop_id: mod.workshop_id,
+              name: mod.name || undefined,
+              mod_ids: [],
+              status: 'error',
+              error: err.response?.data?.detail || err.message || 'Unknown error'
+            });
+          }
+        }
+        
+        setImportLineResults([...results]);
+        
+        // Small delay to avoid overwhelming the API
+        if (i < collection.mods.length - 1 && !importAbortRef.current) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+      
+      loadMods();
+    } catch (err: any) {
+      setError(err.response?.data?.detail || t('mods.collection.parseError'));
+      setParsingCollection(false);
+    } finally {
+      setImportingCollection(false);
+    }
+  };
+
+  const resetImportCollection = () => {
+    setShowImportCollection(false);
+    setCollectionUrl('');
+    setCollectionInfo(null);
+    setImportLineResults([]);
+    setImportLineProgress({ current: 0, total: 0, currentId: '' });
+    importAbortRef.current = false;
+  };
+
   const toggleExpanded = (modId: number) => {
     setExpandedMods(prev => {
       const newSet = new Set(prev);
@@ -624,6 +782,14 @@ export const ModsManager: React.FC = () => {
           >
             <Plus size={18} />
             {t('mods.add')}
+          </button>
+          <button
+            onClick={handleClearAllMods}
+            disabled={loading || mods.length === 0}
+            className="flex items-center gap-2 bg-red-600 hover:bg-red-700 disabled:bg-red-800 text-white px-3 py-2 rounded-lg transition"
+            title={t('mods.clearAll')}
+          >
+            <Trash2 size={18} />
           </button>
           <button
             onClick={loadMods}
@@ -688,12 +854,20 @@ export const ModsManager: React.FC = () => {
             {t('mods.importLine.button')}
           </button>
           <button
+            onClick={() => setShowImportCollection(true)}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg transition text-sm"
+            title={t('mods.collection.title')}
+          >
+            <Package size={16} />
+            {t('mods.collection.button')}
+          </button>
+          <button
             onClick={handleApplyMods}
-            disabled={applying || enabledCount === 0}
+            disabled={applying}
             className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-800 text-white px-4 py-2 rounded-lg transition"
           >
             {applying ? <Loader2 size={18} className="animate-spin" /> : <Play size={18} />}
-            {t('common.apply')}
+            {t('common.apply')} ({enabledCount})
           </button>
         </div>
       </div>
@@ -971,6 +1145,32 @@ export const ModsManager: React.FC = () => {
                           />
                         )}
                       </div>
+                      
+                      {/* Dependencies Info */}
+                      {parsedMod.dependencies && parsedMod.dependencies.length > 0 && (
+                        <div className="bg-blue-900/30 border border-blue-600/50 rounded-lg p-3">
+                          <div className="flex items-center gap-2 text-blue-400 mb-2">
+                            <AlertTriangle size={18} />
+                            <span className="font-medium">{t('mods.willAddDependencies')}</span>
+                          </div>
+                          <p className="text-blue-300/70 text-sm mb-2">{t('mods.dependenciesWillBeAdded')}</p>
+                          <div className="space-y-1">
+                            {parsedMod.dependencies.map((dep) => (
+                              <a 
+                                key={dep.workshop_id}
+                                href={`https://steamcommunity.com/sharedfiles/filedetails/?id=${dep.workshop_id}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-2 text-blue-300 hover:text-blue-100 transition"
+                              >
+                                <ExternalLink size={14} />
+                                <span className="font-mono text-sm">{dep.workshop_id}</span>
+                                {dep.name && <span className="text-blue-400/70">- {dep.name}</span>}
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </>
@@ -1353,6 +1553,205 @@ export const ModsManager: React.FC = () => {
                   <button
                     onClick={resetImportLine}
                     className="w-full bg-amber-600 hover:bg-amber-700 text-white py-2 rounded-lg transition"
+                  >
+                    {t('common.close')}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Import Collection Modal */}
+      {showImportCollection && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-lg border border-gray-700 shadow-xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                <Package className="text-indigo-400" />
+                {t('mods.collection.title')}
+              </h3>
+              <button
+                onClick={resetImportCollection}
+                disabled={parsingCollection}
+                className="text-gray-400 hover:text-white transition disabled:opacity-50"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <p className="text-gray-400 text-sm mb-4">
+              {t('mods.collection.description')}
+            </p>
+
+            {/* URL Input */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-300 mb-1">
+                {t('mods.collection.urlLabel')}
+              </label>
+              <input
+                type="text"
+                value={collectionUrl}
+                onChange={(e) => setCollectionUrl(e.target.value)}
+                placeholder="https://steamcommunity.com/sharedfiles/filedetails?id=..."
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                disabled={importingCollection || parsingCollection}
+              />
+            </div>
+
+            {/* Start button */}
+            {!importingCollection && !parsingCollection && importLineResults.length === 0 && (
+              <button
+                onClick={handleImportCollection}
+                disabled={!collectionUrl.trim()}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-800 text-white py-2 rounded-lg transition"
+              >
+                {t('mods.collection.start')}
+              </button>
+            )}
+
+            {/* Parsing collection - Step 1 */}
+            {parsingCollection && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-3 text-indigo-400">
+                  <Loader2 size={20} className="animate-spin" />
+                  <span>{t('mods.collection.parsing')}</span>
+                </div>
+                <p className="text-gray-500 text-sm">{t('mods.collection.parsingNote')}</p>
+              </div>
+            )}
+
+            {/* Collection info */}
+            {collectionInfo && (
+              <div className="bg-indigo-900/30 border border-indigo-600/50 rounded-lg p-3 mb-4">
+                <div className="text-indigo-300 font-medium">{collectionInfo.name || 'Collection'}</div>
+                <div className="text-indigo-400/70 text-sm">{t('mods.collection.modsFound')}: {collectionInfo.modsCount}</div>
+              </div>
+            )}
+
+            {/* Progress - Step 2 */}
+            {importingCollection && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-400">{t('mods.collection.adding')}...</span>
+                  <span className="text-white">{importLineProgress.current} / {importLineProgress.total}</span>
+                </div>
+                <div className="w-full bg-gray-700 rounded-full h-2">
+                  <div 
+                    className="bg-indigo-500 h-2 rounded-full transition-all"
+                    style={{ width: `${(importLineProgress.current / importLineProgress.total) * 100}%` }}
+                  />
+                </div>
+                {importLineProgress.currentId && (
+                  <div className="text-blue-400 font-mono text-sm">{importLineProgress.currentId}</div>
+                )}
+                <button
+                  onClick={handleCancelImportLine}
+                  className="w-full bg-red-600 hover:bg-red-700 text-white py-2 rounded-lg transition"
+                >
+                  {t('common.cancel')}
+                </button>
+              </div>
+            )}
+
+            {/* Results */}
+            {importLineResults.length > 0 && (
+              <div className="space-y-4">
+                {/* Stats */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-green-900/30 border border-green-700 rounded-lg p-3 text-center">
+                    <div className="text-2xl font-bold text-green-400">
+                      {importLineResults.filter(r => r.status === 'success').length}
+                    </div>
+                    <div className="text-sm text-gray-400">{t('mods.importLine.success')}</div>
+                  </div>
+                  <div className="bg-yellow-900/30 border border-yellow-700 rounded-lg p-3 text-center">
+                    <div className="text-2xl font-bold text-yellow-400">
+                      {importLineResults.filter(r => r.status === 'success' && r.mod_ids.length === 0).length}
+                    </div>
+                    <div className="text-sm text-gray-400">{t('mods.collection.noModId')}</div>
+                  </div>
+                  <div className="bg-red-900/30 border border-red-700 rounded-lg p-3 text-center">
+                    <div className="text-2xl font-bold text-red-400">
+                      {importLineResults.filter(r => r.status === 'error').length}
+                    </div>
+                    <div className="text-sm text-gray-400">{t('mods.importLine.errors')}</div>
+                  </div>
+                </div>
+
+                {/* Warning for mods without ModId */}
+                {importLineResults.filter(r => r.status === 'success' && r.mod_ids.length === 0).length > 0 && (
+                  <div className="bg-yellow-900/30 border border-yellow-600/50 rounded-lg p-3">
+                    <div className="flex items-center gap-2 text-yellow-400 mb-2">
+                      <AlertTriangle size={18} />
+                      <span className="font-medium">{t('mods.collection.missingModIds')}</span>
+                    </div>
+                    <p className="text-yellow-300/70 text-sm mb-2">{t('mods.collection.missingModIdsNote')}</p>
+                    <div className="space-y-1 max-h-32 overflow-y-auto">
+                      {importLineResults.filter(r => r.status === 'success' && r.mod_ids.length === 0).map((result, idx) => (
+                        <a 
+                          key={idx}
+                          href={`https://steamcommunity.com/sharedfiles/filedetails/?id=${result.workshop_id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-2 text-yellow-300 hover:text-yellow-100 transition text-sm"
+                        >
+                          <ExternalLink size={14} />
+                          <span className="font-mono">{result.workshop_id}</span>
+                          {result.name && <span className="text-yellow-400/70">- {result.name}</span>}
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Results list */}
+                <div className="max-h-64 overflow-y-auto space-y-2">
+                  {importLineResults.map((result, idx) => (
+                    <div 
+                      key={idx} 
+                      className={`rounded-lg px-3 py-2 text-sm ${
+                        result.status === 'success' 
+                          ? result.mod_ids.length === 0 
+                            ? 'bg-yellow-900/30 border border-yellow-700'
+                            : 'bg-green-900/30 border border-green-700' 
+                          : 'bg-red-900/30 border border-red-700'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono text-blue-400">{result.workshop_id}</span>
+                        {result.status === 'success' ? (
+                          result.mod_ids.length === 0 ? (
+                            <AlertTriangle size={16} className="text-yellow-400" />
+                          ) : (
+                            <Check size={16} className="text-green-400" />
+                          )
+                        ) : (
+                          <X size={16} className="text-red-400" />
+                        )}
+                      </div>
+                      {result.status === 'success' && (
+                        <div className="text-gray-300 text-xs mt-1">
+                          {result.name || 'Unknown'} 
+                          {result.mod_ids.length > 0 ? (
+                            <span className="text-green-400 ml-2">({result.mod_ids.join(', ')})</span>
+                          ) : (
+                            <span className="text-yellow-400 ml-2">({t('mods.collection.noModIdShort')})</span>
+                          )}
+                        </div>
+                      )}
+                      {result.status === 'error' && (
+                        <div className="text-red-300 text-xs mt-1">{result.error}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {!importingCollection && (
+                  <button
+                    onClick={resetImportCollection}
+                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-lg transition"
                   >
                     {t('common.close')}
                   </button>

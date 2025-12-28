@@ -705,12 +705,55 @@ async def get_server_options(
 
 # ============= Mods Management =============
 
+async def fetch_workshop_details_via_api(workshop_id: str) -> dict:
+    """Fetch mod details via Steam API (faster and more reliable than HTML parsing)"""
+    url = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/"
+    
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(url, data={
+            "itemcount": "1",
+            "publishedfileids[0]": workshop_id
+        })
+        result = response.json()
+    
+    details = result.get('response', {}).get('publishedfiledetails', [{}])[0]
+    
+    if details.get('result') != 1:
+        return None
+    
+    description = details.get('description', '')
+    
+    # Extract Mod IDs from description
+    mod_ids = []
+    for match in re.finditer(r'Mod\s*ID[:\s]+([A-Za-z0-9_-]+)', description, re.IGNORECASE):
+        mod_id = match.group(1).strip()
+        if mod_id and mod_id not in mod_ids and len(mod_id) > 1:
+            mod_ids.append(mod_id)
+    
+    # Extract dependencies from [h1]Required[/h1] section
+    dependencies = []
+    required_match = re.search(r'\[h1\]Required[^[]*\[/h1\](.*?)(?:\[h1\]|\Z)', description, re.IGNORECASE | re.DOTALL)
+    if required_match:
+        required_section = required_match.group(1)
+        dep_ids = re.findall(r'\[url=[^]]*\?id=(\d+)[^]]*\]', required_section)
+        dependencies = list(set(dep_ids))
+    
+    return {
+        'workshop_id': workshop_id,
+        'title': details.get('title'),
+        'mod_ids': mod_ids,
+        'dependencies': dependencies
+    }
+
+
 @app.post("/mods/parse", response_model=ModParseResponse)
 async def parse_workshop_url(
     request: ModParseRequest,
     current_user: str = Depends(get_current_user)
 ):
-    """Parse Steam Workshop URL to extract mod info"""
+    """Parse Steam Workshop URL to extract mod info via Steam API"""
+    from app.schemas import ModDependency
+    
     url = request.url
     
     # Extract workshop ID from URL
@@ -724,46 +767,125 @@ async def parse_workshop_url(
     workshop_id = match.group(1)
     
     try:
-        # Fetch the workshop page
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"https://steamcommunity.com/sharedfiles/filedetails/?id={workshop_id}",
-                follow_redirects=True,
-                timeout=10.0
+        # Fetch mod details via Steam API
+        details = await fetch_workshop_details_via_api(workshop_id)
+        
+        if not details:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Workshop item {workshop_id} not found"
             )
-            html = response.text
         
-        # Extract mod name from title
-        name_match = re.search(r'<div class="workshopItemTitle">([^<]+)</div>', html)
-        name = name_match.group(1).strip() if name_match else None
-        
-        # Extract ALL Mod IDs from description
-        # Looking for patterns like "Mod ID: xxx" or "Mod ID: <b>xxx</b>"
-        mod_ids = []
-        
-        # Find all matches with <b> tags
-        for match in re.finditer(r'Mod\s*ID:\s*<b>([A-Za-z0-9_-]+)</b>', html, re.IGNORECASE):
-            mod_id = match.group(1).strip()
-            if mod_id and mod_id not in mod_ids:
-                mod_ids.append(mod_id)
-        
-        # Also find plain text patterns (but avoid duplicates)
-        for match in re.finditer(r'Mod\s*ID:\s*([A-Za-z0-9_-]+)(?!</b>)', html, re.IGNORECASE):
-            mod_id = match.group(1).strip()
-            # Skip if it's part of HTML tag or already found
-            if mod_id and mod_id not in mod_ids and mod_id.lower() not in ['b', 'br', 'div', 'span']:
-                mod_ids.append(mod_id)
+        # Fetch dependency names
+        dependencies = []
+        for dep_id in details.get('dependencies', []):
+            dep_details = await fetch_workshop_details_via_api(dep_id)
+            dependencies.append(ModDependency(
+                workshop_id=dep_id,
+                name=dep_details.get('title') if dep_details else None
+            ))
         
         return ModParseResponse(
             workshop_id=workshop_id,
-            mod_ids=mod_ids,
-            name=name
+            mod_ids=details.get('mod_ids', []),
+            name=details.get('title'),
+            dependencies=dependencies
         )
         
     except httpx.RequestError as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to fetch workshop page: {str(e)}"
+            detail=f"Failed to fetch from Steam API: {str(e)}"
+        )
+
+
+async def fetch_collection_details(collection_id: str) -> dict:
+    """Fetch collection details via Steam API"""
+    url = "https://api.steampowered.com/ISteamRemoteStorage/GetCollectionDetails/v1/"
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(url, data={
+            "collectioncount": "1",
+            "publishedfileids[0]": collection_id
+        })
+        result = response.json()
+    
+    details = result.get('response', {}).get('collectiondetails', [{}])[0]
+    
+    if details.get('result') != 1:
+        return None
+    
+    children = details.get('children', [])
+    workshop_ids = [c['publishedfileid'] for c in children]
+    
+    return {
+        'collection_id': collection_id,
+        'workshop_ids': workshop_ids
+    }
+
+
+@app.post("/mods/parse-collection")
+async def parse_collection_url(
+    request: ModParseRequest,
+    current_user: str = Depends(get_current_user)
+):
+    """Parse Steam Workshop Collection URL to get all mods"""
+    from app.schemas import CollectionParseResponse, CollectionModInfo
+    
+    url = request.url
+    
+    # Extract collection ID from URL
+    match = re.search(r'id=(\d+)', url)
+    if not match:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid Steam Workshop URL. Could not find collection ID."
+        )
+    
+    collection_id = match.group(1)
+    
+    try:
+        # First get collection name
+        collection_details = await fetch_workshop_details_via_api(collection_id)
+        collection_name = collection_details.get('title') if collection_details else None
+        
+        # Get collection items
+        collection_data = await fetch_collection_details(collection_id)
+        
+        if not collection_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Collection {collection_id} not found or is not a collection"
+            )
+        
+        # Fetch details for each mod in collection
+        mods = []
+        for workshop_id in collection_data['workshop_ids']:
+            mod_details = await fetch_workshop_details_via_api(workshop_id)
+            if mod_details:
+                mods.append(CollectionModInfo(
+                    workshop_id=workshop_id,
+                    name=mod_details.get('title'),
+                    mod_ids=mod_details.get('mod_ids', [])
+                ))
+            else:
+                mods.append(CollectionModInfo(
+                    workshop_id=workshop_id,
+                    name=None,
+                    mod_ids=[]
+                ))
+        
+        return CollectionParseResponse(
+            collection_id=collection_id,
+            name=collection_name,
+            mods_count=len(mods),
+            mods=mods
+        )
+        
+    except httpx.RequestError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to fetch from Steam API: {str(e)}"
         )
 
 

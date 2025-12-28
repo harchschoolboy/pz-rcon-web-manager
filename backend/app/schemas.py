@@ -110,10 +110,29 @@ class ModParseRequest(BaseModel):
     url: str = Field(..., description="Steam Workshop URL")
 
 
+class ModDependency(BaseModel):
+    workshop_id: str
+    name: Optional[str] = None
+
+
 class ModParseResponse(BaseModel):
     workshop_id: str
     mod_ids: list[str]  # List of all found Mod IDs
     name: Optional[str]
+    dependencies: list[ModDependency] = Field(default_factory=list, description="Required mods")
+
+
+class CollectionModInfo(BaseModel):
+    workshop_id: str
+    name: Optional[str] = None
+    mod_ids: list[str] = Field(default_factory=list)
+
+
+class CollectionParseResponse(BaseModel):
+    collection_id: str
+    name: Optional[str]
+    mods_count: int
+    mods: list[CollectionModInfo]
 
 
 class ModsExport(BaseModel):
