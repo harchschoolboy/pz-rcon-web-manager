@@ -7,7 +7,9 @@ Web-based administration panel for Project Zomboid dedicated servers. Manage you
 ## Features
 
 - **Multi-server support** — manage multiple PZ servers from a single panel
-- **Mods management** — add mods by Steam Workshop URL, manage mod lists per server, export/import configurations
+- **Steam Workshop integration** — add mods by URL, import entire collections
+- **Auto-dependencies** — automatically detects and adds required mod dependencies
+- **Mods management** — manage mod lists per server, export/import configurations
 - **RCON console** — execute commands directly on the server
 - **Server settings** — view and modify server options in real-time
 - **Authentication** — secure access with username/password
@@ -17,19 +19,18 @@ Web-based administration panel for Project Zomboid dedicated servers. Manage you
 
 ✅ Connect to PZ servers via RCON protocol  
 ✅ Send any RCON command to the server  
-✅ Manage mod lists (add/remove/enable/disable mods in the app)  
+✅ Manage mod lists (add/remove/enable/disable mods)  
+✅ **Import entire Steam Workshop collections** with one URL  
+✅ **Auto-detect and add mod dependencies**  
 ✅ Sync current server mod configuration to the app  
-✅ Apply mod configuration to server (`setaccesslevel`, `Mods=`, `WorkshopItems=`)  
+✅ Apply mod configuration to server (`Mods=`, `WorkshopItems=`)  
 ✅ Export/import mod configurations as JSON files  
 ✅ Store multiple server connections  
-✅ Work with mods from Steam Workshop (by URL or ID)  
-✅ Restart server using save/quit sequence to RCON
+✅ Restart server using save/quit RCON sequence
 
 ## What This App CANNOT Do
 
 ❌ Download or install mods — only manages mod IDs, actual download happens on server restart  
-❌ Manage mod collections — only individual mods are supported  
-❌ Pull mod dependencies automatically — you need to add each mod manually  
 ❌ Edit server files directly — only RCON commands are used  
 ❌ Upload maps or custom content — only workshop items  
 ❌ Work without RCON enabled on the server  
@@ -79,7 +80,10 @@ Download `pz_webadmin.exe` from [Releases](https://github.com/harchschoolboy/pz-
 
 1. **Add a server** — go to Connections tab, click "Add Server", enter RCON host, port, and password
 2. **Connect** — click on the server and press Connect button
-3. **Manage mods** — go to Mods tab, paste Steam Workshop URL to add mods
+3. **Manage mods** — go to Mods tab:
+   - Paste **Steam Workshop URL** to add a single mod (dependencies auto-detected)
+   - Click **Collection** button to import an entire Steam collection
+   - Use **Import from line** to paste `WorkshopItems=...` string
 4. **Sync mods** — click SYNC to fetch current mod configuration from server
 5. **Apply mods** — select mods to enable and click Apply to send configuration to server
 
@@ -89,7 +93,7 @@ Download `pz_webadmin.exe` from [Releases](https://github.com/harchschoolboy/pz-
 - **Mod page shows APP state**, not server state. Use SYNC button to update from server
 - SYNC merges lists — all mods from server will be added in enabled state
 - Port conflict? Change `"8000:8000"` to `"your_port:8000"` in docker-compose
-- App parses workshop pages to find ModIds and stuff, so if workshop page is messed up, it can show you error. You can always add mod manually.
+- Uses Steam API for mod parsing — faster and more reliable than page scraping
 
 ## Screenshots
 

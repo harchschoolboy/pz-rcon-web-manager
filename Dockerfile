@@ -24,7 +24,7 @@ RUN npm run build
 FROM python:3.11-alpine AS final
 
 # Metadata
-LABEL maintainer="PZ WebAdmin"
+LABEL maintainer="german.ivan.86@gmail.com"
 LABEL description="Project Zomboid Server Management"
 
 WORKDIR /app

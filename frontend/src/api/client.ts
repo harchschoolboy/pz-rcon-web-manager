@@ -246,10 +246,29 @@ export interface ModUpdate {
   is_enabled?: boolean;
 }
 
+export interface ModDependency {
+  workshop_id: string;
+  name: string | null;
+}
+
 export interface ModParseResponse {
   workshop_id: string;
   mod_ids: string[];  // List of all found Mod IDs
   name: string | null;
+  dependencies: ModDependency[];  // Required dependencies
+}
+
+export interface CollectionModInfo {
+  workshop_id: string;
+  name: string | null;
+  mod_ids: string[];
+}
+
+export interface CollectionParseResponse {
+  collection_id: string;
+  name: string | null;
+  mods_count: number;
+  mods: CollectionModInfo[];
 }
 
 export interface ModsExport {
@@ -293,6 +312,11 @@ export interface ServerWorkshopIdsResponse {
 export const modsAPI = {
   parse: async (url: string): Promise<ModParseResponse> => {
     const { data } = await api.post('/mods/parse', { url });
+    return data;
+  },
+
+  parseCollection: async (url: string): Promise<CollectionParseResponse> => {
+    const { data } = await api.post('/mods/parse-collection', { url });
     return data;
   },
 

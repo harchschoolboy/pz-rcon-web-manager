@@ -77,7 +77,7 @@ const OptionRow: React.FC<OptionRowProps> = ({ optionKey, value, serverId, onUpd
   };
 
   return (
-    <div className="flex items-center gap-3 px-4 py-3 hover:bg-gray-700/30 transition">
+    <div className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-700/30 transition">
       {/* Key */}
       <span className="text-gray-300 font-mono text-sm flex-shrink-0 w-1/3 truncate" title={optionKey}>
         {optionKey}
@@ -89,7 +89,7 @@ const OptionRow: React.FC<OptionRowProps> = ({ optionKey, value, serverId, onUpd
           <select
             value={editValue}
             onChange={(e) => setEditValue(e.target.value)}
-            className={`flex-1 px-3 py-1.5 bg-gray-700 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+            className={`flex-1 px-2 py-1 bg-gray-700 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
               hasChanges ? 'border-yellow-500' : 'border-gray-600'
             } ${editValue === 'true' ? 'text-green-400' : 'text-red-400'}`}
           >
@@ -102,7 +102,7 @@ const OptionRow: React.FC<OptionRowProps> = ({ optionKey, value, serverId, onUpd
             value={editValue}
             onChange={(e) => setEditValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            className={`flex-1 px-3 py-1.5 bg-gray-700 border rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+            className={`flex-1 px-2 py-1 bg-gray-700 border rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${
               hasChanges ? 'border-yellow-500' : 'border-gray-600'
             }`}
           />
@@ -112,7 +112,7 @@ const OptionRow: React.FC<OptionRowProps> = ({ optionKey, value, serverId, onUpd
             value={editValue}
             onChange={(e) => setEditValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            className={`flex-1 px-3 py-1.5 bg-gray-700 border rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+            className={`flex-1 px-2 py-1 bg-gray-700 border rounded text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${
               hasChanges ? 'border-yellow-500' : 'border-gray-600'
             }`}
           />
@@ -193,24 +193,6 @@ export const ServerSettings: React.FC = () => {
     value.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  // Group options by category (based on common prefixes)
-  const groupedOptions = filteredOptions.reduce((acc, [key, value]) => {
-    let category = t('settings.categoryOther');
-    
-    if (key.startsWith('Zombie')) category = t('settings.categoryZombie');
-    else if (key.startsWith('Player')) category = t('settings.categoryPlayers');
-    else if (key.startsWith('Vehicle')) category = t('settings.categoryVehicle');
-    else if (key.startsWith('Loot')) category = t('settings.categoryLoot');
-    else if (key.startsWith('Map') || key.startsWith('World')) category = t('settings.categoryWorld');
-    else if (key.startsWith('Server') || key.startsWith('Public') || key.startsWith('Max')) category = t('settings.categoryServer');
-    else if (key.startsWith('PVP') || key.startsWith('Safety')) category = t('settings.categoryPVP');
-    else if (key.includes('XP') || key.includes('Multiplier')) category = t('settings.categoryMultipliers');
-    
-    if (!acc[category]) acc[category] = [];
-    acc[category].push([key, value]);
-    return acc;
-  }, {} as Record<string, [string, string][]>);
-
   if (!selectedServerId) {
     return (
       <div className="flex flex-col items-center justify-center h-64 text-gray-400">
@@ -270,27 +252,20 @@ export const ServerSettings: React.FC = () => {
         </div>
       )}
 
-      {/* Options by category */}
-      {!loading && Object.keys(groupedOptions).length > 0 && (
-        <div className="space-y-6">
-          {Object.entries(groupedOptions).sort(([a], [b]) => a.localeCompare(b)).map(([category, opts]) => (
-            <div key={category} className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-              <div className="bg-gray-700/50 px-4 py-2 font-semibold text-white border-b border-gray-700">
-                {category} ({opts.length})
-              </div>
-              <div className="divide-y divide-gray-700">
-                {opts.sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => (
-                  <OptionRow
-                    key={key}
-                    optionKey={key}
-                    value={value}
-                    serverId={selectedServerId}
-                    onUpdate={handleOptionUpdate}
-                  />
-                ))}
-              </div>
-            </div>
-          ))}
+      {/* Options list */}
+      {!loading && filteredOptions.length > 0 && (
+        <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+          <div className="divide-y divide-gray-700/50">
+            {filteredOptions.map(([key, value]) => (
+              <OptionRow
+                key={key}
+                optionKey={key}
+                value={value}
+                serverId={selectedServerId}
+                onUpdate={handleOptionUpdate}
+              />
+            ))}
+          </div>
         </div>
       )}
 

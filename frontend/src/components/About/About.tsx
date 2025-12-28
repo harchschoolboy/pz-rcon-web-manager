@@ -2,7 +2,7 @@ import React from 'react';
 import { useI18n } from '../../i18n';
 import { Info, Github, Container, Check, X, ExternalLink } from 'lucide-react';
 
-const APP_VERSION = '1.1.1';
+const APP_VERSION = '1.2.0';
 
 export const About: React.FC = () => {
   const { t } = useI18n();
@@ -16,12 +16,12 @@ export const About: React.FC = () => {
     t('about.can.exportImport'),
     t('about.can.multiServer'),
     t('about.can.workshopMods'),
+    t('about.can.dependencies'),
+    t('about.can.collections'),
   ];
 
   const cannotDo = [
     t('about.cannot.downloadMods'),
-    t('about.cannot.collections'),
-    t('about.cannot.dependencies'),
     t('about.cannot.editFiles'),
     t('about.cannot.uploadContent'),
     t('about.cannot.noRcon'),
