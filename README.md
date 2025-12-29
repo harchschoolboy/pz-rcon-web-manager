@@ -99,7 +99,9 @@ Login/password for exe version is admin / admin. It can be changed by creating .
 
 ## Screenshots
 
-<img width="2560" height="1279" alt="PZ Rcon Manager Interface" src="https://github.com/user-attachments/assets/470d4a1f-1577-43d5-b05f-b1e82061d774" />
+<img width="1436" height="893" alt="pz_webadmin_2025-12-29_13-04-39" src="https://github.com/user-attachments/assets/1955bbd7-660b-4fa4-8ea1-4a4976e00eb2" />
+<img width="480" height="920" alt="pz_webadmin_2025-12-28_15-58-57" src="https://github.com/user-attachments/assets/bf86f1bd-36fa-4b05-802d-f0eb78e663a5" />
+<img width="494" height="620" alt="pz_webadmin_2025-12-28_15-57-46" src="https://github.com/user-attachments/assets/ebafbe3d-931f-4a92-b4d6-78469c2679a0" />
 
 ## Technical Details
 
