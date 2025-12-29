@@ -74,7 +74,9 @@ volumes:
 
 ### Windows EXE
 
-Download `pz_webadmin.exe` from [Releases](https://github.com/harchschoolboy/pz-rcon-web-manager/releases), run it, and a browser window will open automatically.
+Download `pz_webadmin.exe` from [Releases](https://github.com/harchschoolboy/pz-rcon-web-manager/releases), run it.
+
+Login/password for exe version is admin / admin. It can be changed by creating .env file in directory with exe file, and configured.
 
 ## Usage
 
