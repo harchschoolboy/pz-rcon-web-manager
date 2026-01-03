@@ -16,6 +16,7 @@ interface ServerState {
   reconnectAttempt: number;
   reconnectCountdown: number;
   playersOnline: PlayersOnline | null;
+  modsRefreshTrigger: number;
   setServers: (servers: Server[]) => void;
   addServer: (server: Server) => void;
   updateServer: (id: number, updates: Partial<Server>) => void;
@@ -27,6 +28,7 @@ interface ServerState {
   setReconnectAttempt: (attempt: number) => void;
   setReconnectCountdown: (seconds: number) => void;
   setPlayersOnline: (players: PlayersOnline | null) => void;
+  triggerModsRefresh: () => void;
 }
 
 export const useServerStore = create<ServerState>((set, get) => ({
@@ -37,6 +39,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
   reconnectAttempt: 0,
   reconnectCountdown: 0,
   playersOnline: null,
+  modsRefreshTrigger: 0,
 
   setServers: (servers) => set({ servers }),
 
@@ -73,4 +76,5 @@ export const useServerStore = create<ServerState>((set, get) => ({
   setReconnectAttempt: (attempt) => set({ reconnectAttempt: attempt }),
   setReconnectCountdown: (seconds) => set({ reconnectCountdown: seconds }),
   setPlayersOnline: (players) => set({ playersOnline: players }),
+  triggerModsRefresh: () => set((state) => ({ modsRefreshTrigger: state.modsRefreshTrigger + 1 })),
 }));

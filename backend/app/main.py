@@ -65,6 +65,7 @@ def server_to_response(server: Server) -> dict:
         "port": server.port,
         "username": username or "admin",
         "is_active": server.is_active,
+        "auto_sync_mods": bool(server.auto_sync_mods),
         "created_at": server.created_at,
         "updated_at": server.updated_at
     }
@@ -412,7 +413,8 @@ async def create_server(
         port=server.port,
         username=encrypted_username,
         password=encrypted_password,
-        is_active=True
+        is_active=True,
+        auto_sync_mods=server.auto_sync_mods
     )
     
     db.add(db_server)

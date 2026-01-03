@@ -10,7 +10,7 @@ import {
 
 export const ModsManager: React.FC = () => {
   const { t } = useI18n();
-  const { selectedServerId, servers } = useServerStore();
+  const { selectedServerId, servers, modsRefreshTrigger } = useServerStore();
   const [mods, setMods] = useState<Mod[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +57,7 @@ export const ModsManager: React.FC = () => {
     if (selectedServerId) {
       loadMods();
     }
-  }, [selectedServerId]);
+  }, [selectedServerId, modsRefreshTrigger]);
 
   const loadMods = async () => {
     if (!selectedServerId) return;

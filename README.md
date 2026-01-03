@@ -9,6 +9,8 @@ Web-based administration panel for Project Zomboid dedicated servers. Manage you
 - **Multi-server support** — manage multiple PZ servers from a single panel
 - **Steam Workshop integration** — add mods by URL, import entire collections
 - **Auto-dependencies** — automatically detects and adds required mod dependencies
+- **Auto-sync mods** — optionally sync mods from server on connect
+- **Server version display** — shows PZ server version on server card
 - **Mods management** — manage mod lists per server, export/import configurations
 - **RCON console** — execute commands directly on the server
 - **Server settings** — view and modify server options in real-time
@@ -22,6 +24,8 @@ Web-based administration panel for Project Zomboid dedicated servers. Manage you
 ✅ Manage mod lists (add/remove/enable/disable mods)  
 ✅ **Import entire Steam Workshop collections** with one URL  
 ✅ **Auto-detect and add mod dependencies**  
+✅ **Auto-sync mods on connect** (optional per-server setting)  
+✅ **Display server version** on connection  
 ✅ Sync current server mod configuration to the app  
 ✅ Apply mod configuration to server (`Mods=`, `WorkshopItems=`)  
 ✅ Export/import mod configurations as JSON files  

@@ -70,6 +70,7 @@ export const locales: Record<Locale, Record<string, string>> = {
     'servers.leaveEmpty': 'залиште порожнім щоб не змінювати',
     'servers.collapse': 'Згорнути',
     'servers.expand': 'Розгорнути',
+    'servers.autoSyncMods': 'Автосинхронізація модів',
 
     // Sidebar
     'sidebar.dashboard': 'Дашборд',
@@ -90,6 +91,8 @@ export const locales: Record<Locale, Record<string, string>> = {
     'about.can.commands': 'Надсилати будь-які RCON команди на сервер',
     'about.can.modLists': 'Керувати списками модів (додавати/видаляти/вмикати/вимикати)',
     'about.can.syncMods': 'Синхронізувати поточну конфігурацію модів сервера',
+    'about.can.autoSync': 'Автоматично синхронізувати моди при підключенні (опціонально)',
+    'about.can.serverVersion': 'Показувати версію сервера на картці підключення',
     'about.can.applyMods': 'Застосовувати конфігурацію модів на сервер (Mods=, WorkshopItems=)',
     'about.can.exportImport': 'Експортувати/імпортувати конфігурації модів як JSON',
     'about.can.multiServer': 'Зберігати підключення до кількох серверів',
@@ -219,6 +222,8 @@ export const locales: Record<Locale, Record<string, string>> = {
     'mods.sync.disableMissing': 'Вимкнути відсутні',
     'mods.sync.disableMissingHint': 'Вимкнути моди які є в списку але відсутні на сервері',
     'mods.disabled': 'вимкнено',
+    'mods.syncing': 'Синхронізація',
+    'mods.syncComplete': 'Синхронізовано',
     'mods.requiresDependencies': 'Цей мод потребує інші моди!',
     'mods.dependenciesNote': 'Додайте ці моди окремо, інакше він не працюватиме:',
     'mods.willAddDependencies': 'Буде додано залежності',
@@ -350,6 +355,7 @@ export const locales: Record<Locale, Record<string, string>> = {
     'servers.leaveEmpty': 'leave empty to keep unchanged',
     'servers.collapse': 'Collapse',
     'servers.expand': 'Expand',
+    'servers.autoSyncMods': 'Auto-sync mods',
 
     // Sidebar
     'sidebar.dashboard': 'Dashboard',
@@ -370,6 +376,8 @@ export const locales: Record<Locale, Record<string, string>> = {
     'about.can.commands': 'Send any RCON command to the server',
     'about.can.modLists': 'Manage mod lists (add/remove/enable/disable mods)',
     'about.can.syncMods': 'Sync current server mod configuration to the app',
+    'about.can.autoSync': 'Auto-sync mods on connect (optional per-server setting)',
+    'about.can.serverVersion': 'Display server version on connection card',
     'about.can.applyMods': 'Apply mod configuration to server (Mods=, WorkshopItems=)',
     'about.can.exportImport': 'Export/import mod configurations as JSON files',
     'about.can.multiServer': 'Store multiple server connections',
@@ -499,6 +507,8 @@ export const locales: Record<Locale, Record<string, string>> = {
     'mods.sync.disableMissing': 'Disable missing',
     'mods.sync.disableMissingHint': 'Disable mods that are in list but not on server',
     'mods.disabled': 'disabled',
+    'mods.syncing': 'Syncing',
+    'mods.syncComplete': 'Synced',
     'mods.requiresDependencies': 'This mod requires other mods!',
     'mods.dependenciesNote': 'Add these mods separately, otherwise it won\'t work:',
     'mods.willAddDependencies': 'Dependencies will be added',

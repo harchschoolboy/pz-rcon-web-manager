@@ -2,7 +2,7 @@ import React from 'react';
 import { useI18n } from '../../i18n';
 import { Info, Github, Container, Check, X, ExternalLink } from 'lucide-react';
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 
 export const About: React.FC = () => {
   const { t } = useI18n();
@@ -12,6 +12,8 @@ export const About: React.FC = () => {
     t('about.can.commands'),
     t('about.can.modLists'),
     t('about.can.syncMods'),
+    t('about.can.autoSync'),
+    t('about.can.serverVersion'),
     t('about.can.applyMods'),
     t('about.can.exportImport'),
     t('about.can.multiServer'),
