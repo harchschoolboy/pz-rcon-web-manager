@@ -16,6 +16,7 @@ class Server(Base):
     username = Column(String(255), nullable=True)  # Encrypted
     password = Column(Text, nullable=False)  # Encrypted
     is_active = Column(Boolean, default=True)
+    auto_sync_mods = Column(Boolean, default=False)  # Auto-sync mods on connect
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

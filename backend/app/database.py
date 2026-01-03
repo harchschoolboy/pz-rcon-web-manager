@@ -1,5 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text
 from app.config import settings
 from app.models import Base
 
@@ -19,10 +20,22 @@ AsyncSessionLocal = async_sessionmaker(
 )
 
 
+async def run_migrations(conn):
+    """Run database migrations for new columns"""
+    # Migration: add auto_sync_mods column to servers table
+    try:
+        await conn.execute(text("ALTER TABLE servers ADD COLUMN auto_sync_mods BOOLEAN DEFAULT 0"))
+    except Exception:
+        # Column already exists
+        pass
+
+
 async def init_db():
     """Initialize database - create all tables"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Run migrations for existing databases
+        await run_migrations(conn)
 
 
 async def get_db() -> AsyncSession:

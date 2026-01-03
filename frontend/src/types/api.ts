@@ -5,6 +5,7 @@ export interface Server {
   port: number;
   username?: string;
   is_active: boolean;
+  auto_sync_mods: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -15,6 +16,7 @@ export interface ServerCreate {
   port: number;
   password: string;
   username?: string;
+  auto_sync_mods?: boolean;
 }
 
 export interface ServerUpdate {
@@ -24,6 +26,7 @@ export interface ServerUpdate {
   password?: string;
   username?: string;
   is_active?: boolean;
+  auto_sync_mods?: boolean;
 }
 
 export interface ConnectionStatus {

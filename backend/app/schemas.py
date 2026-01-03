@@ -13,7 +13,7 @@ class ServerBase(BaseModel):
 
 
 class ServerCreate(ServerBase):
-    pass
+    auto_sync_mods: bool = False
 
 
 class ServerUpdate(BaseModel):
@@ -23,6 +23,7 @@ class ServerUpdate(BaseModel):
     username: Optional[str] = None
     password: Optional[str] = None
     is_active: Optional[bool] = None
+    auto_sync_mods: Optional[bool] = None
 
 
 class ServerResponse(BaseModel):
@@ -32,6 +33,7 @@ class ServerResponse(BaseModel):
     port: int
     username: Optional[str] = "admin"  # Default for old records with NULL
     is_active: bool
+    auto_sync_mods: bool = False
     created_at: datetime
     updated_at: datetime
     

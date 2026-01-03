@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { serverAPI, connectionAPI, commandAPI } from '../../api/client';
+import { serverAPI, connectionAPI, commandAPI, modsAPI } from '../../api/client';
 import { useServerStore } from '../../store/serverStore';
 import { useI18n } from '../../i18n';
 import { 
   Server as ServerIcon, Plus, Trash2, Power, PowerOff, Edit, 
-  ChevronLeft, ChevronRight, X, Users, RotateCcw
+  ChevronLeft, ChevronRight, X, Users, RotateCcw, RefreshCw
 } from 'lucide-react';
 import type { Server } from '../../types/api';
 
@@ -18,13 +18,14 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
   onToggleCollapse 
 }) => {
   const { t } = useI18n();
-  const { servers, setServers, addServer, updateServer, removeServer, selectServer, selectedServerId, playersOnline, setConnectionStatus } = useServerStore();
+  const { servers, setServers, addServer, updateServer, removeServer, selectServer, selectedServerId, playersOnline, setConnectionStatus, triggerModsRefresh } = useServerStore();
   const [loading, setLoading] = useState(true);
   const [connectionStatuses, setConnectionStatuses] = useState<Record<number, boolean>>({});
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingServer, setEditingServer] = useState<Server | null>(null);
   const [restartingServerId, setRestartingServerId] = useState<number | null>(null);
   const [showRestartConfirm, setShowRestartConfirm] = useState<number | null>(null);
+  const [serverVersions, setServerVersions] = useState<Record<number, string>>({});
   
   // Form state
   const [formData, setFormData] = useState({
@@ -32,7 +33,8 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
     host: '',
     port: '27015',
     username: '',
-    password: ''
+    password: '',
+    auto_sync_mods: false
   });
 
   useEffect(() => {
@@ -65,11 +67,52 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
     }
   };
 
+  const [autoSyncStatus, setAutoSyncStatus] = useState<{serverId: number; status: 'syncing' | 'done' | 'error'; message?: string} | null>(null);
+
   const handleConnect = async (serverId: number) => {
     try {
       await connectionAPI.connect(serverId);
       await checkConnection(serverId);
       selectServer(serverId);
+      
+      // Get server version
+      try {
+        const versionResult = await commandAPI.execute(serverId, 'stats version');
+        if (versionResult.response) {
+          // Version is the first part before space, like "42.13.1 ..."
+          const version = versionResult.response.trim().split(/\s+/)[0];
+          if (version && /^\d+\.\d+/.test(version)) {
+            setServerVersions(prev => ({ ...prev, [serverId]: version }));
+          }
+        }
+      } catch (err) {
+        console.error('Failed to get server version:', err);
+      }
+      
+      // Auto-sync mods if enabled
+      const server = servers.find(s => s.id === serverId);
+      if (server && Boolean(server.auto_sync_mods)) {
+        setAutoSyncStatus({ serverId, status: 'syncing' });
+        try {
+          const result = await modsAPI.sync(serverId);
+          setAutoSyncStatus({ 
+            serverId, 
+            status: 'done', 
+            message: `+${result.added} / ~${result.updated} / -${result.disabled}`
+          });
+          // Trigger mods list refresh
+          triggerModsRefresh();
+          // Auto-hide after 3 seconds
+          setTimeout(() => setAutoSyncStatus(null), 3000);
+        } catch (syncError: any) {
+          setAutoSyncStatus({ 
+            serverId, 
+            status: 'error', 
+            message: syncError.response?.data?.detail || 'Sync failed'
+          });
+          setTimeout(() => setAutoSyncStatus(null), 5000);
+        }
+      }
     } catch (error: any) {
       alert(`${t('error.connecting')}: ${error.response?.data?.detail || error.message}`);
     }
@@ -79,6 +122,12 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
     try {
       await connectionAPI.disconnect(serverId);
       await checkConnection(serverId);
+      // Clear version on disconnect
+      setServerVersions(prev => {
+        const updated = { ...prev };
+        delete updated[serverId];
+        return updated;
+      });
     } catch (error: any) {
       alert(`${t('error.disconnecting')}: ${error.response?.data?.detail || error.message}`);
     }
@@ -135,7 +184,8 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
         host: formData.host,
         port: parseInt(formData.port),
         username: formData.username || undefined,
-        password: formData.password
+        password: formData.password,
+        auto_sync_mods: formData.auto_sync_mods
       });
       addServer(server);
       setShowAddForm(false);
@@ -156,7 +206,8 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
         host: formData.host,
         port: parseInt(formData.port),
         username: formData.username || undefined,
-        password: formData.password || undefined
+        password: formData.password || undefined,
+        auto_sync_mods: formData.auto_sync_mods
       });
       updateServer(editingServer.id, updated);
       setEditingServer(null);
@@ -173,7 +224,8 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
       host: server.host,
       port: String(server.port),
       username: '',
-      password: ''
+      password: '',
+      auto_sync_mods: Boolean(server.auto_sync_mods)
     });
   };
 
@@ -183,7 +235,8 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
       host: '',
       port: '27015',
       username: '',
-      password: ''
+      password: '',
+      auto_sync_mods: false
     });
   };
 
@@ -281,8 +334,17 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
                       <p className="text-xs text-gray-400 truncate">
                         {server.host}:{server.port}
                       </p>
+                      {serverVersions[server.id] && (
+                        <p className="text-xs text-cyan-400">v{serverVersions[server.id]}</p>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
+                      {/* Auto-sync indicator */}
+                      {Boolean(server.auto_sync_mods) && (
+                        <span title={t('servers.autoSyncMods')}>
+                          <RefreshCw size={12} className="text-cyan-400" />
+                        </span>
+                      )}
                       {/* Players Online */}
                       {showPlayers && (
                         <div className="flex items-center gap-1 text-xs bg-gray-700/70 px-1.5 py-0.5 rounded">
@@ -300,6 +362,28 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
                       />
                     </div>
                   </div>
+
+                  {/* Auto-sync status */}
+                  {autoSyncStatus?.serverId === server.id && (
+                    <div className={`text-xs px-2 py-1 rounded mb-2 flex items-center gap-1 ${
+                      autoSyncStatus.status === 'syncing' ? 'bg-cyan-900/50 text-cyan-300' :
+                      autoSyncStatus.status === 'done' ? 'bg-green-900/50 text-green-300' :
+                      'bg-red-900/50 text-red-300'
+                    }`}>
+                      {autoSyncStatus.status === 'syncing' && (
+                        <>
+                          <RefreshCw size={10} className="animate-spin" />
+                          {t('mods.syncing')}...
+                        </>
+                      )}
+                      {autoSyncStatus.status === 'done' && (
+                        <>✓ {t('mods.syncComplete')}: {autoSyncStatus.message}</>
+                      )}
+                      {autoSyncStatus.status === 'error' && (
+                        <>✗ {autoSyncStatus.message}</>
+                      )}
+                    </div>
+                  )}
 
                   <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
                     {isConnected ? (
@@ -442,6 +526,19 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
                   className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   required={!editingServer}
                 />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="auto_sync_mods"
+                  checked={formData.auto_sync_mods}
+                  onChange={(e) => setFormData({ ...formData, auto_sync_mods: e.target.checked })}
+                  className="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-2"
+                />
+                <label htmlFor="auto_sync_mods" className="text-sm text-gray-300 cursor-pointer">
+                  {t('servers.autoSyncMods')}
+                </label>
               </div>
 
               <div className="flex gap-3 pt-2">
