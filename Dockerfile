@@ -1,7 +1,7 @@
 # ================================
 # Stage 1: Build Frontend
 # ================================
-FROM node:20-alpine AS frontend-builder
+FROM node:22-alpine3.21 AS frontend-builder
 
 WORKDIR /frontend
 
@@ -21,7 +21,7 @@ RUN npm run build
 # ================================
 # Stage 2: Final Image (Python Alpine + Static)
 # ================================
-FROM python:3.11-alpine AS final
+FROM python:3.13-alpine3.21 AS final
 
 # Metadata
 LABEL maintainer="german.ivan.86@gmail.com"
@@ -32,9 +32,13 @@ WORKDIR /app
 # Copy requirements first for caching
 COPY backend/requirements.txt .
 
+# Security: upgrade base packages (busybox, zlib CVEs)
+RUN apk upgrade --no-cache
+
 # Install deps in one layer, then cleanup
 RUN apk add --no-cache --virtual .build-deps gcc musl-dev libffi-dev && \
     pip install --upgrade pip && \
+    pip install --no-cache-dir "wheel>=0.45.2" && \
     pip install --no-cache-dir -r requirements.txt && \
     apk del .build-deps && \
     rm -rf /root/.cache /tmp/*
