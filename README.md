@@ -10,12 +10,15 @@ Web-based administration panel for Project Zomboid dedicated servers. Manage you
 - **Steam Workshop integration** — add mods by URL, import entire collections
 - **Auto-dependencies** — automatically detects and adds required mod dependencies
 - **Auto-sync mods** — optionally sync mods from server on connect
-- **Server version display** — shows PZ server version on server card
 - **Mods management** — manage mod lists per server, export/import configurations
 - **RCON console** — execute commands directly on the server
 - **Server settings** — view and modify server options in real-time
 - **Authentication** — secure access with username/password
 - **Real-time status** — WebSocket-based connection status and player count
+- ~~**Server version display** — shows PZ server version on server card~~ Broken on server side - if you know how to fix - contact me
+
+
+
 
 ## What This App CAN Do
 
