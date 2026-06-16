@@ -1,4 +1,29 @@
-# Release Notes - PZ WebAdmin v1.0.0
+# Release Notes - PZ WebAdmin
+
+## v1.5.0
+
+**Release Date:** June 16, 2026
+
+### Highlights
+
+- Mods page redesigned into 2 panels: **Known Mods** and **Server Mods**
+- Server cards now support 3 explicit connection states: `disconnected`, `connecting`, `connected`
+- Updated server card action colors for faster recognition:
+  - Connect: blue
+  - Connecting: yellow
+  - Connected: green
+  - Restart Server: red
+- Added Reconnect action on connected server cards to recreate RCON connection quickly
+- Added tooltips on all server card buttons for better UX
+- Added import warning before loading mod lists into the server mods panel
+
+### Notes
+
+- Includes UI and UX improvements focused on connection management clarity and safer mod import flow.
+
+---
+
+## v1.0.0
 
 **Release Date:** December 26, 2025
 

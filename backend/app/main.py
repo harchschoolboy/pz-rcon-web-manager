@@ -25,6 +25,7 @@ from app.schemas import (
     ModCreate,
     ModUpdate,
     ModResponse,
+    ModServerOrderRequest,
     ModParseRequest,
     ModParseResponse,
     ModsExport
@@ -725,9 +726,12 @@ async def fetch_workshop_details_via_api(workshop_id: str) -> dict:
     
     description = details.get('description', '')
     
-    # Extract Mod IDs from description
+    # Extract Mod IDs from description.
+    # Strict format only: "Mod ID: <id>" (a literal colon is required).
+    # A loose pattern previously matched "Mod ID" followed by any whitespace,
+    # which captured stray words from prose and pulled wrong records.
     mod_ids = []
-    for match in re.finditer(r'Mod\s*ID[:\s]+([A-Za-z0-9_-]+)', description, re.IGNORECASE):
+    for match in re.finditer(r'Mod\s*ID\s*:\s*([A-Za-z0-9_-]+)', description, re.IGNORECASE):
         mod_id = match.group(1).strip()
         if mod_id and mod_id not in mod_ids and len(mod_id) > 1:
             mod_ids.append(mod_id)
@@ -901,7 +905,7 @@ async def list_server_mods(
     result = await db.execute(
         select(ServerMod)
         .where(ServerMod.server_id == server_id)
-        .order_by(ServerMod.name)
+        .order_by(ServerMod.position, ServerMod.name)
     )
     mods = result.scalars().all()
     
@@ -918,6 +922,7 @@ async def list_server_mods(
             enabled_mod_ids=enabled_mod_ids,
             name=mod.name,
             is_enabled=mod.is_enabled,
+            position=mod.position,
             workshop_url=mod.workshop_url,
             created_at=mod.created_at,
             updated_at=mod.updated_at
@@ -967,6 +972,7 @@ async def add_server_mod(
             enabled_mod_ids=new_enabled,
             name=existing_mod.name,
             is_enabled=existing_mod.is_enabled,
+            position=existing_mod.position,
             workshop_url=existing_mod.workshop_url,
             created_at=existing_mod.created_at,
             updated_at=existing_mod.updated_at
@@ -998,10 +1004,84 @@ async def add_server_mod(
         enabled_mod_ids=mod.enabled_mod_ids,
         name=db_mod.name,
         is_enabled=db_mod.is_enabled,
+        position=db_mod.position,
         workshop_url=db_mod.workshop_url,
         created_at=db_mod.created_at,
         updated_at=db_mod.updated_at
     )
+
+
+@app.put("/servers/{server_id}/mods/server-order", response_model=List[ModResponse])
+async def set_server_mods_order(
+    server_id: int,
+    order: ModServerOrderRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: str = Depends(get_current_user)
+):
+    """Set the server (left) panel membership and order.
+
+    Mods listed in ordered_ids become enabled and get sequential positions
+    (0, 1, 2, ...). Every other mod for this server is marked disabled.
+    Called on every drag (reorder, move-in, move-out) so the staging list
+    stays the single source of truth for apply order.
+    """
+    result = await db.execute(
+        select(ServerMod).where(ServerMod.server_id == server_id)
+    )
+    mods = result.scalars().all()
+    mods_by_id = {m.id: m for m in mods}
+
+    # Validate that all provided ids belong to this server
+    for mod_id in order.ordered_ids:
+        if mod_id not in mods_by_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Mod {mod_id} not found for this server"
+            )
+
+    ordered_set = set(order.ordered_ids)
+    now = datetime.utcnow()
+
+    # Enabled mods in the server panel: set position by order index.
+    for index, mod_id in enumerate(order.ordered_ids):
+        mod = mods_by_id[mod_id]
+        if not mod.is_enabled or mod.position != index:
+            mod.is_enabled = True
+            mod.position = index
+            mod.updated_at = now
+
+    # Everything else moves to the known (right) panel: disabled.
+    for mod in mods:
+        if mod.id not in ordered_set and mod.is_enabled:
+            mod.is_enabled = False
+            mod.updated_at = now
+
+    await db.commit()
+
+    # Return the full mod list (ordered) so the client can resync state.
+    result = await db.execute(
+        select(ServerMod)
+        .where(ServerMod.server_id == server_id)
+        .order_by(ServerMod.position, ServerMod.name)
+    )
+    refreshed = result.scalars().all()
+
+    response = []
+    for mod in refreshed:
+        response.append(ModResponse(
+            id=mod.id,
+            server_id=mod.server_id,
+            workshop_id=mod.workshop_id,
+            mod_ids=mod.mod_ids.split(';') if mod.mod_ids else [],
+            enabled_mod_ids=mod.enabled_mod_ids.split(';') if mod.enabled_mod_ids else [],
+            name=mod.name,
+            is_enabled=mod.is_enabled,
+            position=mod.position,
+            workshop_url=mod.workshop_url,
+            created_at=mod.created_at,
+            updated_at=mod.updated_at
+        ))
+    return response
 
 
 @app.put("/servers/{server_id}/mods/{mod_id}", response_model=ModResponse)
@@ -1036,11 +1116,12 @@ async def update_server_mod(
     
     if 'enabled_mod_ids' in update_data:
         mod.enabled_mod_ids = ';'.join(update_data['enabled_mod_ids']) if update_data['enabled_mod_ids'] else ''
-        # Update is_enabled based on whether any mod_ids are enabled
-        mod.is_enabled = len(update_data['enabled_mod_ids']) > 0
+        # NOTE: is_enabled (server-panel membership) is NOT derived here.
+        # It is controlled solely by the server-order endpoint (drag-and-drop)
+        # or by explicit is_enabled in the update payload.
         del update_data['enabled_mod_ids']
     
-    # Handle other fields
+    # Handle other fields (including explicit is_enabled when provided)
     for field, value in update_data.items():
         setattr(mod, field, value)
     
@@ -1060,6 +1141,7 @@ async def update_server_mod(
         enabled_mod_ids=enabled_mod_ids_list,
         name=mod.name,
         is_enabled=mod.is_enabled,
+        position=mod.position,
         workshop_url=mod.workshop_url,
         created_at=mod.created_at,
         updated_at=mod.updated_at
@@ -1105,22 +1187,17 @@ async def apply_mods_to_server(
             detail=f"Not connected to server {server_id}. Connect first."
         )
     
-    # Get all mods that have enabled mod_ids
+    # Get all mods that have enabled mod_ids, in server-panel order
     result = await db.execute(
         select(ServerMod).where(
             ServerMod.server_id == server_id,
             ServerMod.is_enabled == True
-        )
+        ).order_by(ServerMod.position, ServerMod.name)
     )
     enabled_mods = result.scalars().all()
     
-    if not enabled_mods:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No enabled mods to apply"
-        )
-    
-    # Build mod strings from enabled_mod_ids
+    # Build mod strings from enabled_mod_ids.
+    # An empty list is a valid state: it clears Mods/WorkshopItems on the server.
     all_mod_ids = []
     all_workshop_ids = []
     
@@ -1131,13 +1208,8 @@ async def apply_mods_to_server(
             # Add workshop_id once for each mod record that has enabled mod_ids
             all_workshop_ids.append(mod.workshop_id)
     
-    if not all_mod_ids:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No enabled mod IDs to apply"
-        )
-    
-    # Build command strings with backslash prefix for mod_ids
+    # Build command strings with backslash prefix for mod_ids.
+    # When there is nothing enabled, send empty strings to clear the server config.
     mod_ids_str = ";".join([f"\\{mid}" for mid in all_mod_ids])
     workshop_ids_str = ";".join(all_workshop_ids)
     

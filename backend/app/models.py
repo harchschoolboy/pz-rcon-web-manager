@@ -98,6 +98,10 @@ class ServerMod(Base):
     
     # Status
     is_enabled = Column(Boolean, default=True)  # Master switch for this workshop item
+
+    # Ordering: position in the server (left) panel. Determines apply order.
+    # Only meaningful when is_enabled is True. Disabled mods keep their last value.
+    position = Column(Integer, nullable=False, default=0)
     
     # Metadata
     workshop_url = Column(String(500), nullable=True)

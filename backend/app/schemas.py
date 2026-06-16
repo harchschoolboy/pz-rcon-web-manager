@@ -100,12 +100,20 @@ class ModResponse(BaseModel):
     enabled_mod_ids: list[str]  # Which mod IDs are enabled
     name: Optional[str]
     is_enabled: bool
+    position: int  # Order in the server (left) panel; drives apply order
     workshop_url: Optional[str]
     created_at: datetime
     updated_at: datetime
     
     class Config:
         from_attributes = True
+
+
+class ModServerOrderRequest(BaseModel):
+    ordered_ids: list[int] = Field(
+        ...,
+        description="Mod record IDs in the desired server-panel order. These become enabled; all others for the server become disabled."
+    )
 
 
 class ModParseRequest(BaseModel):
