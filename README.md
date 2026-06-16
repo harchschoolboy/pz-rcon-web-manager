@@ -17,6 +17,15 @@ Web-based administration panel for Project Zomboid dedicated servers. Manage you
 - **Real-time status** — WebSocket-based connection status and player count
 - ~~**Server version display** — shows PZ server version on server card~~ Broken on server side - if you know how to fix - contact me
 
+## What's New in v1.5.0
+
+- **Mods page redesign** — now uses 2 panels: **Known Mods** and **Server Mods** for clearer workflow
+- **Server cards: tri-state connection UX** — clear `disconnected`, `connecting`, and `connected` states
+- **Button color update** — Connect (blue), Connecting (yellow), Connected (green), Restart Server (red)
+- **Reconnect button on connected cards** — recreate RCON connection without removing server
+- **Tooltips on server card controls** — clearer actions for connect/disconnect/reconnect/restart/edit/delete
+- **Safer mods import** — warning confirmation before importing list into server mods panel
+
 
 
 

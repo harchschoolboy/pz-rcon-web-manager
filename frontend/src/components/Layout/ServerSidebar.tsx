@@ -4,9 +4,11 @@ import { useServerStore } from '../../store/serverStore';
 import { useI18n } from '../../i18n';
 import { 
   Server as ServerIcon, Plus, Trash2, Power, PowerOff, Edit, 
-  ChevronLeft, ChevronRight, X, Users, RotateCcw, RefreshCw
+  ChevronLeft, ChevronRight, X, Users, RotateCcw, RefreshCw, Loader2
 } from 'lucide-react';
 import type { Server } from '../../types/api';
+
+type CardConnState = 'disconnected' | 'connecting' | 'connected';
 
 interface ServerSidebarProps {
   collapsed?: boolean;
@@ -20,7 +22,7 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
   const { t } = useI18n();
   const { servers, setServers, addServer, updateServer, removeServer, selectServer, selectedServerId, playersOnline, setConnectionStatus, triggerModsRefresh } = useServerStore();
   const [loading, setLoading] = useState(true);
-  const [connectionStatuses, setConnectionStatuses] = useState<Record<number, boolean>>({});
+  const [connectionStatuses, setConnectionStatuses] = useState<Record<number, CardConnState>>({});
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingServer, setEditingServer] = useState<Server | null>(null);
   const [restartingServerId, setRestartingServerId] = useState<number | null>(null);
@@ -61,15 +63,16 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
   const checkConnection = async (serverId: number) => {
     try {
       const status = await connectionAPI.status(serverId);
-      setConnectionStatuses((prev) => ({ ...prev, [serverId]: status.connected }));
+      setConnectionStatuses((prev) => ({ ...prev, [serverId]: status.connected ? 'connected' : 'disconnected' }));
     } catch (error) {
-      setConnectionStatuses((prev) => ({ ...prev, [serverId]: false }));
+      setConnectionStatuses((prev) => ({ ...prev, [serverId]: 'disconnected' }));
     }
   };
 
   const [autoSyncStatus, setAutoSyncStatus] = useState<{serverId: number; status: 'syncing' | 'done' | 'error'; message?: string} | null>(null);
 
   const handleConnect = async (serverId: number) => {
+    setConnectionStatuses((prev) => ({ ...prev, [serverId]: 'connecting' }));
     try {
       await connectionAPI.connect(serverId);
       await checkConnection(serverId);
@@ -114,6 +117,20 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
         }
       }
     } catch (error: any) {
+      setConnectionStatuses((prev) => ({ ...prev, [serverId]: 'disconnected' }));
+      alert(`${t('error.connecting')}: ${error.response?.data?.detail || error.message}`);
+    }
+  };
+
+  // Перестворює RCON-з'єднання: відключити, потім підключити знову.
+  const handleReconnect = async (serverId: number) => {
+    setConnectionStatuses((prev) => ({ ...prev, [serverId]: 'connecting' }));
+    try {
+      await connectionAPI.disconnect(serverId);
+      await connectionAPI.connect(serverId);
+      await checkConnection(serverId);
+    } catch (error: any) {
+      setConnectionStatuses((prev) => ({ ...prev, [serverId]: 'disconnected' }));
       alert(`${t('error.connecting')}: ${error.response?.data?.detail || error.message}`);
     }
   };
@@ -153,6 +170,7 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
       
       // Server will disconnect
       setConnectionStatus('disconnected');
+      setConnectionStatuses((prev) => ({ ...prev, [serverId]: 'disconnected' }));
       await checkConnection(serverId);
     } catch (err) {
       console.error('Restart failed:', err);
@@ -313,7 +331,9 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
             </div>
           ) : (
             servers.map((server) => {
-              const isConnected = connectionStatuses[server.id];
+              const connState: CardConnState = connectionStatuses[server.id] || 'disconnected';
+              const isConnected = connState === 'connected';
+              const isConnecting = connState === 'connecting';
               const isSelected = selectedServerId === server.id;
               // Show players if server is selected and we have player data
               const showPlayers = isSelected && playersOnline !== null;
@@ -357,8 +377,19 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
                       )}
                       <div
                         className={`w-2.5 h-2.5 rounded-full ${
-                          isConnected ? 'bg-green-500' : 'bg-gray-500'
+                          isConnected
+                            ? 'bg-green-500'
+                            : isConnecting
+                            ? 'bg-yellow-500 animate-pulse'
+                            : 'bg-gray-500'
                         }`}
+                        title={
+                          isConnected
+                            ? t('connection.connected')
+                            : isConnecting
+                            ? t('connection.connecting')
+                            : t('connection.disconnected')
+                        }
                       />
                     </div>
                   </div>
@@ -386,19 +417,36 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
                   )}
 
                   <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-                    {isConnected ? (
+                    {isConnecting ? (
+                      <button
+                        disabled
+                        className="flex-1 flex items-center justify-center gap-1 bg-yellow-600 text-white px-2 py-1 rounded text-xs cursor-wait"
+                        title={t('connection.connectingTitle')}
+                      >
+                        <Loader2 size={12} className="animate-spin" />
+                        {t('connection.connecting')}
+                      </button>
+                    ) : isConnected ? (
                       <>
                         <button
                           onClick={() => handleDisconnect(server.id)}
-                          className="flex-1 flex items-center justify-center gap-1 bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded text-xs transition"
+                          className="flex-1 flex items-center justify-center gap-1 bg-green-600 hover:bg-green-700 text-white px-2 py-1 rounded text-xs transition"
+                          title={t('connection.disconnectTitle')}
                         >
                           <PowerOff size={12} />
-                          {t('connection.disconnect')}
+                          {t('connection.connected')}
+                        </button>
+                        <button
+                          onClick={() => handleReconnect(server.id)}
+                          className="p-1 bg-blue-600 hover:bg-blue-700 text-white rounded transition"
+                          title={t('connection.reconnectTitle')}
+                        >
+                          <RefreshCw size={12} />
                         </button>
                         <button
                           onClick={() => setShowRestartConfirm(server.id)}
                           disabled={restartingServerId === server.id}
-                          className="p-1 bg-orange-600 hover:bg-orange-700 disabled:bg-orange-800 text-white rounded transition"
+                          className="p-1 bg-red-600 hover:bg-red-700 disabled:bg-red-800 text-white rounded transition"
                           title={t('connection.restart')}
                         >
                           <RotateCcw size={12} className={restartingServerId === server.id ? 'animate-spin' : ''} />
@@ -407,7 +455,8 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
                     ) : (
                       <button
                         onClick={() => handleConnect(server.id)}
-                        className="flex-1 flex items-center justify-center gap-1 bg-green-600 hover:bg-green-700 text-white px-2 py-1 rounded text-xs transition"
+                        className="flex-1 flex items-center justify-center gap-1 bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded text-xs transition"
+                        title={t('connection.connectTitle')}
                       >
                         <Power size={12} />
                         {t('connection.connect')}
@@ -416,12 +465,14 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
                     <button
                       onClick={() => startEdit(server)}
                       className="p-1 bg-gray-600 hover:bg-gray-500 text-white rounded transition"
+                      title={t('common.edit')}
                     >
                       <Edit size={12} />
                     </button>
                     <button
                       onClick={() => handleDelete(server.id, server.name)}
                       className="p-1 bg-gray-600 hover:bg-red-600 text-white rounded transition"
+                      title={t('common.delete')}
                     >
                       <Trash2 size={12} />
                     </button>

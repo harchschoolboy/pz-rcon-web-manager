@@ -226,6 +226,7 @@ export interface Mod {
   enabled_mod_ids: string[];   // Which mod IDs are enabled
   name: string | null;
   is_enabled: boolean;
+  position: number;            // Order in the server (left) panel; drives apply order
   workshop_url: string | null;
   created_at: string;
   updated_at: string;
@@ -332,6 +333,11 @@ export const modsAPI = {
 
   update: async (serverId: number, modId: number, updates: ModUpdate): Promise<Mod> => {
     const { data } = await api.put(`/servers/${serverId}/mods/${modId}`, updates);
+    return data;
+  },
+
+  setServerOrder: async (serverId: number, orderedIds: number[]): Promise<Mod[]> => {
+    const { data } = await api.put(`/servers/${serverId}/mods/server-order`, { ordered_ids: orderedIds });
     return data;
   },
 

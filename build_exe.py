@@ -114,7 +114,8 @@ def main():
             url,
             width=1400,
             height=900,
-            min_size=(800, 600)
+            min_size=(800, 600),
+            text_select=True  # Allow selecting/copying text (e.g. console output)
         )
         webview.start()
     except ImportError:

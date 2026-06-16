@@ -16,6 +16,15 @@ export const Layout: React.FC = () => {
   const { t } = useI18n();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
+  // Build timestamp injected at compile time (see vite.config.ts)
+  const buildTimeLabel = (() => {
+    try {
+      return new Date(__BUILD_TIME__).toLocaleString();
+    } catch {
+      return __BUILD_TIME__;
+    }
+  })();
+
   const handleLogout = () => {
     logout();
     navigate('/login');
@@ -102,6 +111,9 @@ export const Layout: React.FC = () => {
         <div className="px-4 py-4">
           <p className="text-center text-gray-500 text-sm">
             PZ Rcon Manager © 2025 | Project Zomboid Server Management
+          </p>
+          <p className="text-center text-gray-600 text-xs mt-1">
+            {t('footer.buildTime')}: {buildTimeLabel}
           </p>
         </div>
       </footer>

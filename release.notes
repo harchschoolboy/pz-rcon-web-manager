@@ -1,4 +1,18 @@
-# PZ Rcon Manager v1.0.0
+# PZ Rcon Manager
+
+## v1.5.0 (2026-06-16)
+
+### Important changes
+- Mods page redesigned into 2 panels: Known Mods and Server Mods
+- Added tri-state connection UX on server cards: disconnected, connecting, connected
+- Updated server card button colors: Connect (blue), Connecting (yellow), Connected (green), Restart (red)
+- Added Reconnect button in connected state to recreate RCON connection
+- Added tooltips on all server card action buttons
+- Added warning confirmation before importing mod list into the server mods panel
+
+---
+
+## v1.0.0
 
 Web-based administration panel for Project Zomboid dedicated servers. Manage your servers, mods, and settings through a modern web interface using RCON protocol.
 

@@ -1,15 +1,18 @@
 import React, { useEffect, useState } from 'react';
-import { serverAPI, connectionAPI } from '../../api/client';
+import { serverAPI, connectionAPI, commandAPI } from '../../api/client';
 import { useServerStore } from '../../store/serverStore';
 import { useI18n } from '../../i18n';
-import { Server as ServerIcon, Plus, Trash2, Power, PowerOff, Edit } from 'lucide-react';
+import { Server as ServerIcon, Plus, Trash2, Power, PowerOff, Edit, RefreshCw, RotateCcw, Loader2 } from 'lucide-react';
 import type { Server } from '../../types/api';
+
+type CardConnState = 'disconnected' | 'connecting' | 'connected';
 
 export const ServerList: React.FC = () => {
   const { t } = useI18n();
   const { servers, setServers, removeServer, selectServer, selectedServerId } = useServerStore();
   const [loading, setLoading] = useState(true);
-  const [connectionStatuses, setConnectionStatuses] = useState<Record<number, boolean>>({});
+  const [connectionStatuses, setConnectionStatuses] = useState<Record<number, CardConnState>>({});
+  const [restartingId, setRestartingId] = useState<number | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingServer, setEditingServer] = useState<Server | null>(null);
 
@@ -42,17 +45,19 @@ export const ServerList: React.FC = () => {
   const checkConnection = async (serverId: number) => {
     try {
       const status = await connectionAPI.status(serverId);
-      setConnectionStatuses((prev) => ({ ...prev, [serverId]: status.connected }));
+      setConnectionStatuses((prev) => ({ ...prev, [serverId]: status.connected ? 'connected' : 'disconnected' }));
     } catch (error) {
-      setConnectionStatuses((prev) => ({ ...prev, [serverId]: false }));
+      setConnectionStatuses((prev) => ({ ...prev, [serverId]: 'disconnected' }));
     }
   };
 
   const handleConnect = async (serverId: number) => {
+    setConnectionStatuses((prev) => ({ ...prev, [serverId]: 'connecting' }));
     try {
       await connectionAPI.connect(serverId);
       await checkConnection(serverId);
     } catch (error: any) {
+      setConnectionStatuses((prev) => ({ ...prev, [serverId]: 'disconnected' }));
       alert(`${t('error.connecting')}: ${error.response?.data?.detail || error.message}`);
     }
   };
@@ -63,6 +68,41 @@ export const ServerList: React.FC = () => {
       await checkConnection(serverId);
     } catch (error: any) {
       alert(`${t('error.disconnecting')}: ${error.response?.data?.detail || error.message}`);
+    }
+  };
+
+  // Recreate the RCON connection: disconnect, then connect again.
+  const handleReconnect = async (serverId: number) => {
+    setConnectionStatuses((prev) => ({ ...prev, [serverId]: 'connecting' }));
+    try {
+      await connectionAPI.disconnect(serverId);
+      await connectionAPI.connect(serverId);
+      await checkConnection(serverId);
+    } catch (error: any) {
+      setConnectionStatuses((prev) => ({ ...prev, [serverId]: 'disconnected' }));
+      alert(`${t('error.connecting')}: ${error.response?.data?.detail || error.message}`);
+    }
+  };
+
+  // Save then quit the game server (it is expected to relaunch via its wrapper).
+  const handleRestart = async (serverId: number) => {
+    if (!confirm(`${t('connection.restartConfirm')}\n${t('connection.restartDesc')}`)) return;
+    setRestartingId(serverId);
+    try {
+      const saveResult = await commandAPI.execute(serverId, 'save');
+      const saveResponse = saveResult.response?.toLowerCase() || '';
+      if (saveResponse.includes('error') || saveResponse.includes('fail')) {
+        throw new Error('Save command failed');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await commandAPI.execute(serverId, 'quit');
+      setConnectionStatuses((prev) => ({ ...prev, [serverId]: 'disconnected' }));
+      await checkConnection(serverId);
+    } catch (err) {
+      console.error('Restart failed:', err);
+      alert(t('connection.restartFailed'));
+    } finally {
+      setRestartingId(null);
     }
   };
 
@@ -110,7 +150,10 @@ export const ServerList: React.FC = () => {
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {servers.map((server) => {
-            const isConnected = connectionStatuses[server.id];
+            const connState: CardConnState = connectionStatuses[server.id] || 'disconnected';
+            const isConnected = connState === 'connected';
+            const isConnecting = connState === 'connecting';
+            const isRestarting = restartingId === server.id;
             const isSelected = selectedServerId === server.id;
 
             return (
@@ -132,27 +175,65 @@ export const ServerList: React.FC = () => {
                   </div>
                   <div
                     className={`w-3 h-3 rounded-full ${
-                      isConnected ? 'bg-green-500' : 'bg-gray-500'
+                      isConnected
+                        ? 'bg-green-500'
+                        : isConnecting
+                        ? 'bg-yellow-500 animate-pulse'
+                        : 'bg-gray-500'
                     }`}
-                    title={isConnected ? t('connection.connected') : t('connection.disconnected')}
+                    title={
+                      isConnected
+                        ? t('connection.connected')
+                        : isConnecting
+                        ? t('connection.connecting')
+                        : t('connection.disconnected')
+                    }
                   />
                 </div>
 
-                <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
-                  {isConnected ? (
+                <div className="flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
+                  {isConnecting ? (
                     <button
-                      onClick={() => handleDisconnect(server.id)}
-                      className="flex items-center gap-1 bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-sm transition"
-                      title={t('connection.disconnect')}
+                      disabled
+                      className="flex items-center gap-1 bg-yellow-600 text-white px-3 py-1 rounded text-sm cursor-wait"
+                      title={t('connection.connectingTitle')}
                     >
-                      <PowerOff size={16} />
-                      {t('connection.disconnect')}
+                      <Loader2 size={16} className="animate-spin" />
+                      {t('connection.connecting')}
                     </button>
+                  ) : isConnected ? (
+                    <>
+                      <button
+                        onClick={() => handleDisconnect(server.id)}
+                        className="flex items-center gap-1 bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm transition"
+                        title={t('connection.disconnectTitle')}
+                      >
+                        <PowerOff size={16} />
+                        {t('connection.connected')}
+                      </button>
+                      <button
+                        onClick={() => handleReconnect(server.id)}
+                        className="flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm transition"
+                        title={t('connection.reconnectTitle')}
+                      >
+                        <RefreshCw size={16} />
+                        {t('connection.reconnect')}
+                      </button>
+                      <button
+                        onClick={() => handleRestart(server.id)}
+                        disabled={isRestarting}
+                        className="flex items-center gap-1 bg-red-600 hover:bg-red-700 disabled:bg-red-800 text-white px-3 py-1 rounded text-sm transition"
+                        title={t('connection.restart')}
+                      >
+                        {isRestarting ? <Loader2 size={16} className="animate-spin" /> : <RotateCcw size={16} />}
+                        {isRestarting ? t('connection.restarting') : t('connection.restart')}
+                      </button>
+                    </>
                   ) : (
                     <button
                       onClick={() => handleConnect(server.id)}
-                      className="flex items-center gap-1 bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm transition"
-                      title={t('connection.connect')}
+                      className="flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm transition"
+                      title={t('connection.connectTitle')}
                     >
                       <Power size={16} />
                       {t('connection.connect')}

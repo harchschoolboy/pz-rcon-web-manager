@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { commandAPI } from '../../api/client';
 import { useServerStore } from '../../store/serverStore';
 import { useI18n } from '../../i18n';
-import { Terminal, Send, Trash2, Clock } from 'lucide-react';
+import { Terminal, Send, Trash2, Clock, Copy, Check } from 'lucide-react';
 import type { CommandLog } from '../../types/api';
 
 export const RconConsole: React.FC = () => {
@@ -14,6 +14,7 @@ export const RconConsole: React.FC = () => {
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const consoleRef = useRef<HTMLDivElement>(null);
+  const [copied, setCopied] = useState(false);
 
   const selectedServer = getSelectedServer();
 
@@ -104,6 +105,25 @@ export const RconConsole: React.FC = () => {
     }
   };
 
+  const copyConsole = async () => {
+    const text = history
+      .map((log) => {
+        const ts = new Date(log.executed_at).toLocaleString();
+        const body = log.success
+          ? (log.response || `(${t('console.noResponse')})`)
+          : `${t('console.error')}: ${log.error_message}`;
+        return `[${ts}] $ ${log.command}\n${body}`;
+      })
+      .join('\n\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      console.error('Failed to copy console:', error);
+    }
+  };
+
   if (!selectedServerId || !selectedServer) {
     return (
       <div className="bg-gray-800 rounded-lg p-8 text-center border border-gray-700">
@@ -125,20 +145,31 @@ export const RconConsole: React.FC = () => {
             {t('console.serverLabel')}: <span className="text-blue-400">{selectedServer.name}</span>
           </p>
         </div>
-        <button
-          onClick={clearHistory}
-          className="flex items-center gap-2 bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition"
-        >
-          <Trash2 size={16} />
-          {t('console.clear')}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={copyConsole}
+            disabled={history.length === 0}
+            className="flex items-center gap-2 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg transition"
+            title={t('console.copy')}
+          >
+            {copied ? <Check size={16} className="text-green-400" /> : <Copy size={16} />}
+            {t('console.copy')}
+          </button>
+          <button
+            onClick={clearHistory}
+            className="flex items-center gap-2 bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition"
+          >
+            <Trash2 size={16} />
+            {t('console.clear')}
+          </button>
+        </div>
       </div>
 
       {/* Console Output */}
       <div
         ref={consoleRef}
-        className="bg-gray-900 rounded-lg p-4 min-h-48 overflow-y-auto font-mono text-sm border border-gray-700 resize-y"
-        style={{ height: '384px' }}
+        className="bg-gray-900 rounded-lg p-4 min-h-48 overflow-y-auto font-mono text-sm border border-gray-700 resize-y select-text cursor-text"
+        style={{ height: '384px', userSelect: 'text', WebkitUserSelect: 'text' }}
       >
         {history.length === 0 ? (
           <div className="text-gray-500 text-center py-8">

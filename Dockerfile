@@ -1,7 +1,7 @@
 # ================================
 # Stage 1: Build Frontend
 # ================================
-FROM node:22-alpine3.21 AS frontend-builder
+FROM node:22-alpine3.24 AS frontend-builder
 
 WORKDIR /frontend
 
@@ -21,7 +21,7 @@ RUN npm run build
 # ================================
 # Stage 2: Final Image (Python Alpine + Static)
 # ================================
-FROM python:3.13-alpine3.21 AS final
+FROM python:3.13-alpine3.24 AS final
 
 # Metadata
 LABEL maintainer="german.ivan.86@gmail.com"

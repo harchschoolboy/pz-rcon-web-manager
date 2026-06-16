@@ -1,8 +1,8 @@
 import React from 'react';
 import { useI18n } from '../../i18n';
-import { Info, Github, Container, Check, X, ExternalLink } from 'lucide-react';
+import { Info, Github, Container, Check, X, ExternalLink, ListChecks } from 'lucide-react';
 
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.5.0';
 
 export const About: React.FC = () => {
   const { t } = useI18n();
@@ -27,6 +27,15 @@ export const About: React.FC = () => {
     t('about.cannot.editFiles'),
     t('about.cannot.uploadContent'),
     t('about.cannot.noRcon'),
+  ];
+
+  const importantChanges = [
+    t('about.change.modsTwoPanels'),
+    t('about.change.serverCardsState'),
+    t('about.change.reconnectButton'),
+    t('about.change.restartButtonColor'),
+    t('about.change.cardTooltips'),
+    t('about.change.importWarning'),
   ];
 
   return (
@@ -80,6 +89,22 @@ export const About: React.FC = () => {
           </div>
           <ExternalLink size={16} className="text-gray-500 ml-auto" />
         </a>
+      </div>
+
+      {/* Important Changes */}
+      <div className="bg-gray-800 rounded-lg p-5 border border-blue-700/40">
+        <h2 className="text-lg font-semibold text-blue-300 mb-4 flex items-center gap-2">
+          <ListChecks size={20} />
+          {t('about.importantChangesTitle')}
+        </h2>
+        <ul className="space-y-2">
+          {importantChanges.map((item, index) => (
+            <li key={index} className="flex items-start gap-2 text-gray-300">
+              <Check size={16} className="text-blue-400 mt-0.5 flex-shrink-0" />
+              <span className="text-sm">{item}</span>
+            </li>
+          ))}
+        </ul>
       </div>
 
       {/* Capabilities */}
