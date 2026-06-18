@@ -133,12 +133,6 @@ Steam limits how often you can request Workshop pages. If you resolve many mods 
 
 If you still see `429` errors, wait a minute and use **Update unknown** or the per-mod retry button instead of refreshing everything at once.
 
-## Screenshots
-
-<img width="1436" height="893" alt="pz_webadmin_2025-12-29_13-04-39" src="https://github.com/user-attachments/assets/1955bbd7-660b-4fa4-8ea1-4a4976e00eb2" />
-<img width="480" height="920" alt="pz_webadmin_2025-12-28_15-58-57" src="https://github.com/user-attachments/assets/bf86f1bd-36fa-4b05-802d-f0eb78e663a5" />
-<img width="494" height="620" alt="pz_webadmin_2025-12-28_15-57-46" src="https://github.com/user-attachments/assets/ebafbe3d-931f-4a92-b4d6-78469c2679a0" />
-
 ## Links
 
 - **Docker Hub**: [harchschoolboy/pz-rcon-server-manager](https://hub.docker.com/r/harchschoolboy/pz-rcon-server-manager)
