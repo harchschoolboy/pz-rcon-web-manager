@@ -83,6 +83,7 @@ class ModCreate(BaseModel):
     enabled_mod_ids: list[str] = Field(default_factory=list, description="List of enabled Mod IDs")
     name: Optional[str] = Field(None, description="Mod name")
     is_enabled: bool = Field(True, description="Master switch - whether mod is enabled")
+    dependencies: list[str] = Field(default_factory=list, description="Dependency workshop IDs")
 
 
 class ModUpdate(BaseModel):
@@ -90,6 +91,7 @@ class ModUpdate(BaseModel):
     enabled_mod_ids: Optional[list[str]] = None
     name: Optional[str] = None
     is_enabled: Optional[bool] = None
+    dependencies: Optional[list[str]] = None
 
 
 class ModResponse(BaseModel):
@@ -102,6 +104,8 @@ class ModResponse(BaseModel):
     is_enabled: bool
     position: int  # Order in the server (left) panel; drives apply order
     workshop_url: Optional[str]
+    dependencies: list[str] = Field(default_factory=list, description="Dependency workshop IDs")
+    dependencies_checked: bool = Field(default=True, description="Whether dependencies have ever been resolved for this mod")
     created_at: datetime
     updated_at: datetime
     

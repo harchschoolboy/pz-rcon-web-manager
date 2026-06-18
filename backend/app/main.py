@@ -7,8 +7,10 @@ from sqlalchemy import select
 from typing import List, Dict, Set, Optional
 import json
 import re
+import sys
 import httpx
 import asyncio
+import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -41,6 +43,20 @@ from app.auth import (
     get_current_user,
     verify_token
 )
+
+
+# Application logger with timestamps. Configured independently of uvicorn so
+# every log line carries a timestamp regardless of how the server is launched.
+logger = logging.getLogger("pz_webadmin")
+if not logger.handlers:
+    _log_handler = logging.StreamHandler(sys.stdout)
+    _log_handler.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    logger.addHandler(_log_handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
 
 
 app = FastAPI(
@@ -278,7 +294,7 @@ async def get_max_players(server_id: int) -> int:
                 _max_players_cache[server_id] = max_players
                 return max_players
     except Exception as e:
-        print(f"Error getting max players: {e}")
+        logger.error(f"Error getting max players: {e}")
     
     return 0
 
@@ -318,7 +334,7 @@ async def get_players_count(server_id: int) -> dict:
         }
         
     except Exception as e:
-        print(f"Error getting players count: {e}")
+        logger.error(f"Error getting players count: {e}")
         return {"connected": False, "current": 0, "max": 0}
 
 
@@ -379,7 +395,7 @@ async def websocket_endpoint(
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket, server_id)
     except Exception as e:
-        print(f"WebSocket error: {e}")
+        logger.error(f"WebSocket error: {e}")
         ws_manager.disconnect(websocket, server_id)
 
 
@@ -708,15 +724,68 @@ async def get_server_options(
 
 # ============= Mods Management =============
 
+# Steam rate limiting: Steam returns HTTP 429 when hit too fast. Serialize all
+# outbound Steam requests (API + HTML scraping) and space them by a minimum
+# interval so bursts (a mod plus each of its dependencies) stay under the limit.
+_STEAM_MIN_INTERVAL = 1.0  # seconds between consecutive Steam requests
+_steam_lock = asyncio.Lock()
+_steam_last_request = 0.0
+
+# Browser-like headers. Bare requests (just a minimal User-Agent) are throttled
+# by Steam more aggressively; sending a full set of headers makes the request
+# look like a real browser and reduces 429 responses.
+_STEAM_BROWSER_HEADERS = {
+    'User-Agent': (
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+        '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+    ),
+    'Accept': (
+        'text/html,application/xhtml+xml,application/xml;q=0.9,'
+        'image/avif,image/webp,*/*;q=0.8'
+    ),
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-User': '?1',
+}
+
+# In-memory cache of successfully scraped Required Items, keyed by workshop_id.
+# Avoids re-hitting the Workshop page (and risking another 429) for mods whose
+# dependencies were already resolved during this process lifetime.
+_required_items_cache: Dict[str, list] = {}
+
+
+async def _steam_throttle():
+    """Block until at least _STEAM_MIN_INTERVAL has passed since the last Steam call."""
+    global _steam_last_request
+    async with _steam_lock:
+        now = asyncio.get_event_loop().time()
+        wait = _STEAM_MIN_INTERVAL - (now - _steam_last_request)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _steam_last_request = asyncio.get_event_loop().time()
+
+
 async def fetch_workshop_details_via_api(workshop_id: str) -> dict:
     """Fetch mod details via Steam API (faster and more reliable than HTML parsing)"""
     url = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/"
-    
+
+    await _steam_throttle()
     async with httpx.AsyncClient(timeout=15.0) as client:
         response = await client.post(url, data={
             "itemcount": "1",
             "publishedfileids[0]": workshop_id
         })
+        if response.status_code == 429:
+            logger.warning(f"api workshop_id={workshop_id} got 429 (rate limit)")
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Steam rate limit (429) for {workshop_id}"
+            )
         result = response.json()
     
     details = result.get('response', {}).get('publishedfiledetails', [{}])[0]
@@ -752,6 +821,57 @@ async def fetch_workshop_details_via_api(workshop_id: str) -> dict:
     }
 
 
+async def fetch_workshop_required_items_via_html(workshop_id: str) -> list[dict]:
+    """Fetch the 'Required Items' shown on the Workshop page.
+
+    The Steam GetPublishedFileDetails API does not expose required items for
+    mods, so we scrape the rendered page's RequiredItems container.
+    Returns a list of {'workshop_id': str, 'name': Optional[str]}.
+    """
+    # Serve from cache if we already resolved this mod's dependencies.
+    cached = _required_items_cache.get(workshop_id)
+    if cached is not None:
+        logger.info(f"required-items workshop_id={workshop_id} served from cache ({len(cached)})")
+        return cached
+
+    page_url = f"https://steamcommunity.com/sharedfiles/filedetails/?id={workshop_id}"
+    await _steam_throttle()
+    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        response = await client.get(page_url, headers=_STEAM_BROWSER_HEADERS)
+    if response.status_code == 429:
+        logger.warning(f"required-items workshop_id={workshop_id} got 429 (rate limit)")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Steam rate limit (429) while fetching dependencies for {workshop_id}"
+        )
+    if response.status_code != 200:
+        return []
+    html = response.text
+
+    block_match = re.search(r'id="RequiredItems">(.*?)<!-- created by -->', html, re.DOTALL)
+    if not block_match:
+        # No Required Items section: cache the empty result so we don't refetch.
+        _required_items_cache[workshop_id] = []
+        return []
+
+    block = block_match.group(1)
+    items = re.findall(
+        r'\?id=(\d+)"[^>]*>\s*<div class="requiredItem">\s*(.*?)\s*</div>',
+        block,
+        re.DOTALL,
+    )
+    result = []
+    seen = set()
+    for dep_id, name in items:
+        if dep_id in seen:
+            continue
+        seen.add(dep_id)
+        clean_name = re.sub(r'\s+', ' ', name).strip()
+        result.append({'workshop_id': dep_id, 'name': clean_name or None})
+    _required_items_cache[workshop_id] = result
+    return result
+
+
 @app.post("/mods/parse", response_model=ModParseResponse)
 async def parse_workshop_url(
     request: ModParseRequest,
@@ -771,6 +891,7 @@ async def parse_workshop_url(
         )
     
     workshop_id = match.group(1)
+    logger.info(f"parse workshop_id={workshop_id}")
     
     try:
         # Fetch mod details via Steam API
@@ -782,15 +903,34 @@ async def parse_workshop_url(
                 detail=f"Workshop item {workshop_id} not found"
             )
         
-        # Fetch dependency names
+        # Fetch dependencies. The Steam API does not return required items for
+        # mods, so scrape the workshop page; fall back to any IDs found in the
+        # description's [h1]Required[/h1] section.
         dependencies = []
+        seen_dep_ids = set()
+        for item in await fetch_workshop_required_items_via_html(workshop_id):
+            dep_id = item['workshop_id']
+            if dep_id in seen_dep_ids:
+                continue
+            seen_dep_ids.add(dep_id)
+            dependencies.append(ModDependency(
+                workshop_id=dep_id,
+                name=item.get('name')
+            ))
         for dep_id in details.get('dependencies', []):
+            if dep_id in seen_dep_ids:
+                continue
+            seen_dep_ids.add(dep_id)
             dep_details = await fetch_workshop_details_via_api(dep_id)
             dependencies.append(ModDependency(
                 workshop_id=dep_id,
                 name=dep_details.get('title') if dep_details else None
             ))
         
+        logger.info(
+            f"parsed workshop_id={workshop_id} name={details.get('title')!r} "
+            f"mod_ids={len(details.get('mod_ids', []))} deps={len(dependencies)}"
+        )
         return ModParseResponse(
             workshop_id=workshop_id,
             mod_ids=details.get('mod_ids', []),
@@ -799,6 +939,7 @@ async def parse_workshop_url(
         )
         
     except httpx.RequestError as e:
+        logger.error(f"parse workshop_id={workshop_id} failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to fetch from Steam API: {str(e)}"
@@ -924,6 +1065,8 @@ async def list_server_mods(
             is_enabled=mod.is_enabled,
             position=mod.position,
             workshop_url=mod.workshop_url,
+            dependencies=mod.dependencies.split(';') if mod.dependencies else [],
+            dependencies_checked=mod.dependencies is not None,
             created_at=mod.created_at,
             updated_at=mod.updated_at
         ))
@@ -957,8 +1100,11 @@ async def add_server_mod(
         existing_enabled = existing_mod.enabled_mod_ids.split(';') if existing_mod.enabled_mod_ids else []
         new_enabled = list(set(existing_enabled + mod.enabled_mod_ids))
         existing_mod.enabled_mod_ids = ';'.join(new_enabled)
-        
-        existing_mod.is_enabled = len(new_enabled) > 0
+
+        # Preserve current panel membership on re-add (do not yank a staged mod
+        # off the server just because the add payload defaults to known).
+        if mod.dependencies:
+            existing_mod.dependencies = ';'.join(mod.dependencies)
         existing_mod.updated_at = datetime.utcnow()
         
         await db.commit()
@@ -974,6 +1120,8 @@ async def add_server_mod(
             is_enabled=existing_mod.is_enabled,
             position=existing_mod.position,
             workshop_url=existing_mod.workshop_url,
+            dependencies=existing_mod.dependencies.split(';') if existing_mod.dependencies else [],
+            dependencies_checked=existing_mod.dependencies is not None,
             created_at=existing_mod.created_at,
             updated_at=existing_mod.updated_at
         )
@@ -987,8 +1135,9 @@ async def add_server_mod(
         workshop_id=mod.workshop_id,
         mod_ids=mod_ids_str,
         enabled_mod_ids=enabled_mod_ids_str,
+        dependencies=';'.join(mod.dependencies) if mod.dependencies else None,
         name=mod.name,
-        is_enabled=len(mod.enabled_mod_ids) > 0,
+        is_enabled=mod.is_enabled,
         workshop_url=f"https://steamcommunity.com/sharedfiles/filedetails/?id={mod.workshop_id}"
     )
     
@@ -1006,6 +1155,8 @@ async def add_server_mod(
         is_enabled=db_mod.is_enabled,
         position=db_mod.position,
         workshop_url=db_mod.workshop_url,
+        dependencies=mod.dependencies or [],
+        dependencies_checked=db_mod.dependencies is not None,
         created_at=db_mod.created_at,
         updated_at=db_mod.updated_at
     )
@@ -1078,6 +1229,8 @@ async def set_server_mods_order(
             is_enabled=mod.is_enabled,
             position=mod.position,
             workshop_url=mod.workshop_url,
+            dependencies=mod.dependencies.split(';') if mod.dependencies else [],
+            dependencies_checked=mod.dependencies is not None,
             created_at=mod.created_at,
             updated_at=mod.updated_at
         ))
@@ -1120,6 +1273,14 @@ async def update_server_mod(
         # It is controlled solely by the server-order endpoint (drag-and-drop)
         # or by explicit is_enabled in the update payload.
         del update_data['enabled_mod_ids']
+
+    if 'dependencies' in update_data:
+        deps = update_data['dependencies']
+        # Empty string (not NULL) marks the mod as checked with no dependencies,
+        # so the UI can distinguish "checked, none" from "never checked".
+        mod.dependencies = ';'.join(deps) if deps else ''
+        logger.info(f"update mod id={mod_id} workshop={mod.workshop_id} deps={len(deps) if deps else 0}")
+        del update_data['dependencies']
     
     # Handle other fields (including explicit is_enabled when provided)
     for field, value in update_data.items():
@@ -1143,6 +1304,8 @@ async def update_server_mod(
         is_enabled=mod.is_enabled,
         position=mod.position,
         workshop_url=mod.workshop_url,
+        dependencies=mod.dependencies.split(';') if mod.dependencies else [],
+        dependencies_checked=mod.dependencies is not None,
         created_at=mod.created_at,
         updated_at=mod.updated_at
     )
@@ -1261,7 +1424,8 @@ async def export_server_mods(
                 mod_ids=mod.mod_ids.split(';') if mod.mod_ids else [],
                 enabled_mod_ids=mod.enabled_mod_ids.split(';') if mod.enabled_mod_ids else [],
                 name=mod.name,
-                is_enabled=mod.is_enabled
+                is_enabled=mod.is_enabled,
+                dependencies=mod.dependencies.split(';') if mod.dependencies else []
             )
             for mod in mods
         ]
@@ -1300,7 +1464,8 @@ async def download_server_mods(
                 "mod_ids": mod.mod_ids.split(';') if mod.mod_ids else [],
                 "enabled_mod_ids": mod.enabled_mod_ids.split(';') if mod.enabled_mod_ids else [],
                 "name": mod.name,
-                "is_enabled": mod.is_enabled
+                "is_enabled": mod.is_enabled,
+                "dependencies": mod.dependencies.split(';') if mod.dependencies else []
             }
             for mod in mods
         ]
@@ -1351,6 +1516,9 @@ async def import_server_mods(
             new_enabled = list(set(existing_enabled + mod_data.enabled_mod_ids))
             existing.enabled_mod_ids = ';'.join(new_enabled)
             existing.is_enabled = len(new_enabled) > 0
+            # Dependencies: prefer imported list when present, else keep existing.
+            if mod_data.dependencies:
+                existing.dependencies = ';'.join(mod_data.dependencies)
             existing.updated_at = datetime.utcnow()
             updated += 1
         else:
@@ -1362,6 +1530,7 @@ async def import_server_mods(
                 enabled_mod_ids=';'.join(mod_data.enabled_mod_ids) if mod_data.enabled_mod_ids else '',
                 name=mod_data.name,
                 is_enabled=len(mod_data.enabled_mod_ids) > 0,
+                dependencies=';'.join(mod_data.dependencies) if mod_data.dependencies else None,
                 workshop_url=f"https://steamcommunity.com/sharedfiles/filedetails/?id={mod_data.workshop_id}"
             )
             db.add(db_mod)

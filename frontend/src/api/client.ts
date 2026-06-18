@@ -228,6 +228,8 @@ export interface Mod {
   is_enabled: boolean;
   position: number;            // Order in the server (left) panel; drives apply order
   workshop_url: string | null;
+  dependencies: string[];      // Workshop IDs this mod depends on
+  dependencies_checked: boolean; // False if dependencies were never resolved yet
   created_at: string;
   updated_at: string;
 }
@@ -238,6 +240,7 @@ export interface ModCreate {
   enabled_mod_ids: string[];
   name?: string;
   is_enabled?: boolean;
+  dependencies?: string[];
 }
 
 export interface ModUpdate {
@@ -245,6 +248,7 @@ export interface ModUpdate {
   enabled_mod_ids?: string[];
   name?: string;
   is_enabled?: boolean;
+  dependencies?: string[];
 }
 
 export interface ModDependency {

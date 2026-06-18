@@ -15,16 +15,15 @@ Web-based administration panel for Project Zomboid dedicated servers. Manage you
 - **Server settings** — view and modify server options in real-time
 - **Authentication** — secure access with username/password
 - **Real-time status** — WebSocket-based connection status and player count
-- ~~**Server version display** — shows PZ server version on server card~~ Broken on server side - if you know how to fix - contact me
 
-## What's New in v1.5.0
+## What's New in v1.6.0
 
-- **Mods page redesign** — now uses 2 panels: **Known Mods** and **Server Mods** for clearer workflow
-- **Server cards: tri-state connection UX** — clear `disconnected`, `connecting`, and `connected` states
-- **Button color update** — Connect (blue), Connecting (yellow), Connected (green), Restart Server (red)
-- **Reconnect button on connected cards** — recreate RCON connection without removing server
-- **Tooltips on server card controls** — clearer actions for connect/disconnect/reconnect/restart/edit/delete
-- **Safer mods import** — warning confirmation before importing list into server mods panel
+- **Two dependency update modes** — update dependencies for **all** mods, or only for **unchecked** mods that were never resolved
+- **Per-mod dependency check** — each mod card has a check button with live status (pending / success / error) and one-click retry on failure
+- **Realtime updates** — the mod list updates in place while dependencies are being resolved
+- **Export/import includes dependencies** — dependency data is now preserved when exporting and importing mod lists
+- **Steam rate-limit protection** — request throttling, browser-like headers, and an in-memory cache to reduce `429 Too Many Requests` errors
+- **Timestamped backend logs** — clearer, time-stamped server logs
 
 
 
@@ -36,11 +35,11 @@ Web-based administration panel for Project Zomboid dedicated servers. Manage you
 ✅ Manage mod lists (add/remove/enable/disable mods)  
 ✅ **Import entire Steam Workshop collections** with one URL  
 ✅ **Auto-detect and add mod dependencies**  
-✅ **Auto-sync mods on connect** (optional per-server setting)  
-✅ **Display server version** on connection  
+✅ **Auto-sync mods on connect** (optional per-server setting)
+✅ **Display server version** on server card
 ✅ Sync current server mod configuration to the app  
 ✅ Apply mod configuration to server (`Mods=`, `WorkshopItems=`)  
-✅ Export/import mod configurations as JSON files  
+✅ Export/import mod configurations as JSON files (including dependencies)  
 ✅ Store multiple server connections  
 ✅ Restart server using save/quit RCON sequence
 
@@ -113,20 +112,32 @@ Login/password for exe version is admin / admin. It can be changed by creating .
 - Port conflict? Change `"8000:8000"` to `"your_port:8000"` in docker-compose
 - Uses Steam API for mod parsing — faster and more reliable than page scraping
 
+## Mod Dependencies & Steam Rate Limits
+
+Mods often require other mods to work. The app resolves these dependencies from the Steam Workshop:
+
+- **Where dependencies come from** — the Steam API does not expose the "Required Items" of Project Zomboid mods, so the app reads the public Workshop page and parses the **Required Items** block to find dependency workshop IDs.
+- **Updating dependencies** — use the dependency buttons on the Mods page:
+  - **Update all** — re-resolves dependencies for every mod in the list
+  - **Update unknown** — only resolves mods that were never checked before (faster, fewer Steam requests)
+- **Per-mod retry** — if a single mod fails, use its retry button instead of re-running the whole list.
+
+### Potential `429 Too Many Requests` error
+
+Steam limits how often you can request Workshop pages. If you resolve many mods quickly you may hit a `429 Too Many Requests` response. The app reduces this with:
+
+- **Request throttling** — Workshop requests are spaced out (about one per second)
+- **Browser-like headers** — requests look like a normal browser to avoid aggressive blocking
+- **In-memory cache** — already-resolved pages are not fetched again during a session
+- **Automatic retry with backoff** — failed mods are retried a few times before being marked as failed
+
+If you still see `429` errors, wait a minute and use **Update unknown** or the per-mod retry button instead of refreshing everything at once.
+
 ## Screenshots
 
 <img width="1436" height="893" alt="pz_webadmin_2025-12-29_13-04-39" src="https://github.com/user-attachments/assets/1955bbd7-660b-4fa4-8ea1-4a4976e00eb2" />
 <img width="480" height="920" alt="pz_webadmin_2025-12-28_15-58-57" src="https://github.com/user-attachments/assets/bf86f1bd-36fa-4b05-802d-f0eb78e663a5" />
 <img width="494" height="620" alt="pz_webadmin_2025-12-28_15-57-46" src="https://github.com/user-attachments/assets/ebafbe3d-931f-4a92-b4d6-78469c2679a0" />
-
-## Technical Details
-
-See [TECHNICAL.md](TECHNICAL.md) for:
-- Architecture and tech stack
-- Environment variables
-- API endpoints
-- Build instructions
-- Development setup
 
 ## Links
 
