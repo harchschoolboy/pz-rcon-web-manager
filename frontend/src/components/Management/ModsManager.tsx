@@ -583,6 +583,23 @@ export const ModsManager: React.FC = () => {
     // Get counts for confirmation
     const workshopCount = mods.filter(m => m.is_enabled).length;
     const modIdCount = mods.filter(m => m.is_enabled).reduce((acc, m) => acc + m.enabled_mod_ids.length, 0);
+
+    // Warn if any enabled mod has a known dependency that is NOT present in the
+    // server panel (missing dependency would break the load order on the server).
+    const enabledMods = mods.filter(m => m.is_enabled);
+    const enabledWorkshopIds = new Set(enabledMods.map(m => m.workshop_id));
+    const labelFor = (wid: string) => mods.find(m => m.workshop_id === wid)?.name || wid;
+    const missingDepWarnings: string[] = [];
+    for (const m of enabledMods) {
+      const missing = m.dependencies.filter(depWid => !enabledWorkshopIds.has(depWid));
+      if (missing.length > 0) {
+        missingDepWarnings.push(`${m.name || m.mod_ids[0]} -> ${missing.map(labelFor).join(', ')}`);
+      }
+    }
+    if (missingDepWarnings.length > 0) {
+      const warnMsg = `${t('mods.applyMissingDepsWarning')}\n\n${missingDepWarnings.join('\n')}`;
+      if (!confirm(warnMsg)) return;
+    }
     
     // Show confirmation
     const confirmMsg = enabledCount === 0 
@@ -921,6 +938,19 @@ export const ModsManager: React.FC = () => {
     }
   });
 
+  // Server-panel dependency presence: a mod's known dependency must also be
+  // present in the server panel. Flag mods whose dependency is missing entirely
+  // (e.g. the dependency was moved back to the known panel).
+  const missingDepIds = new Set<number>();
+  const missingDepLabelsById = new Map<number, string[]>();
+  serverMods.forEach((m) => {
+    const missing = m.dependencies.filter(depWid => !serverIndexByWorkshop.has(depWid));
+    if (missing.length > 0) {
+      missingDepIds.add(m.id);
+      missingDepLabelsById.set(m.id, missing.map(depLabel));
+    }
+  });
+
   const selectedServerCount = serverMods.filter(m => selectedIds.has(m.id)).length;
   const selectedKnownCount = knownMods.filter(m => selectedIds.has(m.id)).length;
 
@@ -1045,6 +1075,8 @@ export const ModsManager: React.FC = () => {
         const isExpanded = expandedMods.has(mod.id);
         const hasMultipleModIds = mod.mod_ids.length > 1;
         const isMisordered = panel === 'server' && misorderedIds.has(mod.id);
+        const isMissingDep = panel === 'server' && missingDepIds.has(mod.id);
+        const missingDepLabels = missingDepLabelsById.get(mod.id) || [];
         const depLabels = mod.dependencies.map(depLabel);
         return (
           <div
@@ -1053,6 +1085,8 @@ export const ModsManager: React.FC = () => {
             className={`bg-gray-800 border rounded-lg mb-2 transition ${
               snapshot.isDragging
                 ? 'border-blue-500 shadow-lg shadow-blue-500/20'
+                : isMissingDep
+                ? 'border-red-500 bg-red-900/10'
                 : isMisordered
                 ? 'border-amber-500 bg-amber-900/10'
                 : 'border-gray-700'
@@ -1130,14 +1164,16 @@ export const ModsManager: React.FC = () => {
               )}
               {mod.dependencies.length > 0 && (
                 <span
-                  className={`flex items-center p-1.5 ${isMisordered ? 'text-amber-400' : 'text-gray-400'}`}
+                  className={`flex items-center p-1.5 ${isMissingDep ? 'text-red-400' : isMisordered ? 'text-amber-400' : 'text-gray-400'}`}
                   title={
-                    isMisordered
+                    isMissingDep
+                      ? `${t('mods.dependencyMissing')}: ${missingDepLabels.join(', ')}\n${t('mods.hasDependencies')}: ${depLabels.join(', ')}`
+                      : isMisordered
                       ? `${t('mods.dependencyOrderWrong')}\n${t('mods.hasDependencies')}: ${depLabels.join(', ')}`
                       : `${t('mods.hasDependencies')}: ${depLabels.join(', ')}`
                   }
                 >
-                  {isMisordered ? <AlertTriangle size={14} /> : <Link2 size={14} />}
+                  {(isMissingDep || isMisordered) ? <AlertTriangle size={14} /> : <Link2 size={14} />}
                 </span>
               )}
               {(() => {
