@@ -94,6 +94,7 @@ class ServerMod(Base):
     workshop_id = Column(String(50), nullable=False)
     mod_ids = Column(Text, nullable=False)  # All mod IDs separated by ;
     enabled_mod_ids = Column(Text, nullable=True)  # Enabled mod IDs separated by ;
+    dependencies = Column(Text, nullable=True)  # Dependency workshop IDs separated by ;
     name = Column(String(500), nullable=True)
     
     # Status

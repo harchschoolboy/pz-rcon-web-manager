@@ -2,7 +2,7 @@ import React from 'react';
 import { useI18n } from '../../i18n';
 import { Info, Github, Container, Check, X, ExternalLink, ListChecks } from 'lucide-react';
 
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.6.0';
 
 export const About: React.FC = () => {
   const { t } = useI18n();
@@ -30,12 +30,12 @@ export const About: React.FC = () => {
   ];
 
   const importantChanges = [
-    t('about.change.modsTwoPanels'),
-    t('about.change.serverCardsState'),
-    t('about.change.reconnectButton'),
-    t('about.change.restartButtonColor'),
-    t('about.change.cardTooltips'),
-    t('about.change.importWarning'),
+    t('about.change.depsExportImport'),
+    t('about.change.depsTwoModes'),
+    t('about.change.depsCheckButton'),
+    t('about.change.depsRealtime'),
+    t('about.change.steam429'),
+    t('about.change.backendLogs'),
   ];
 
   return (

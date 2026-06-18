@@ -6,8 +6,23 @@ import { useI18n } from '../../i18n';
 import { 
   Package, RefreshCw, ExternalLink, AlertCircle, Search, 
   Plus, Trash2, Download, Upload, Play, Loader2, Check, X,
-  Link, DownloadCloud, ChevronDown, ChevronRight, FileText, AlertTriangle, GripVertical
+  Link, DownloadCloud, ChevronDown, ChevronRight, FileText, AlertTriangle, GripVertical, ArrowRight, ArrowLeft, CheckSquare, Link2
 } from 'lucide-react';
+
+// Steam Workshop brand glyph (lucide-react has no Steam icon).
+const SteamIcon: React.FC<{ size?: number; className?: string }> = ({ size = 14, className }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="currentColor"
+    className={className}
+    aria-hidden="true"
+  >
+    <path d="M11.979 0C5.678 0 .511 4.86.022 11.037l6.432 2.658c.545-.371 1.203-.59 1.912-.59.063 0 .125.004.188.006l2.861-4.142V8.91c0-2.495 2.028-4.524 4.524-4.524 2.494 0 4.524 2.031 4.524 4.527s-2.03 4.525-4.524 4.525h-.105l-4.076 2.911c0 .052.004.105.004.159 0 1.875-1.515 3.396-3.39 3.396-1.635 0-3.016-1.173-3.331-2.727L.436 15.27C1.862 20.307 6.486 24 11.979 24c6.627 0 11.999-5.373 11.999-12S18.605 0 11.979 0zM7.54 18.21l-1.473-.61c.262.543.714.999 1.314 1.25 1.297.539 2.793-.076 3.332-1.375.263-.63.264-1.319.005-1.949s-.75-1.121-1.377-1.383c-.624-.26-1.29-.249-1.878-.03l1.523.63c.956.4 1.409 1.5 1.009 2.455-.397.957-1.497 1.41-2.454 1.012H7.54zm11.415-9.303c0-1.662-1.353-3.015-3.015-3.015-1.665 0-3.015 1.353-3.015 3.015 0 1.665 1.35 3.015 3.015 3.015 1.663 0 3.015-1.35 3.015-3.015zm-5.273-.005c0-1.252 1.013-2.266 2.265-2.266 1.249 0 2.266 1.014 2.266 2.266 0 1.251-1.017 2.265-2.266 2.265-1.253 0-2.265-1.014-2.265-2.265z" />
+  </svg>
+);
 
 export const ModsManager: React.FC = () => {
   const { t } = useI18n();
@@ -17,7 +32,7 @@ export const ModsManager: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedMods, setExpandedMods] = useState<Set<number>>(new Set());
-  // Multi-select for moving mods between panels via buttons.
+  // Multi-select for moving checkboxed mods between panels.
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   
   // Add mod form
@@ -39,6 +54,15 @@ export const ModsManager: React.FC = () => {
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<SyncModsResponse | null>(null);
   const [showSyncResult, setShowSyncResult] = useState(false);
+
+  // Rebuild-dependencies state
+  const [rebuildingDeps, setRebuildingDeps] = useState(false);
+  const [rebuildProgress, setRebuildProgress] = useState({ current: 0, total: 0, currentId: '', status: '' });
+  // Per-mod rebuild status (keyed by mod.id): a temporary checkmark on success
+  // (cleared when the whole operation finishes) and a persistent error marker
+  // that stays so the user can retry that single mod.
+  const [rebuildItemStatus, setRebuildItemStatus] = useState<Record<number, 'pending' | 'ok' | 'error'>>({});
+  const [rebuildErrors, setRebuildErrors] = useState<Record<number, string>>({});
   const [disableMissing, setDisableMissing] = useState(true);
   
   // Import from line state
@@ -144,9 +168,9 @@ export const ModsManager: React.FC = () => {
               await modsAPI.add(selectedServerId, {
                 workshop_id: dep.workshop_id,
                 mod_ids: depResult.mod_ids,
-                enabled_mod_ids: depResult.mod_ids, // Enable all by default
+                enabled_mod_ids: depResult.mod_ids, // Pre-selected, ready when staged to server
                 name: depResult.name || dep.name || undefined,
-                is_enabled: true
+                is_enabled: false // Always added to the known library
               });
             } catch (depErr: any) {
               // Skip if dependency already exists (409 conflict)
@@ -163,7 +187,8 @@ export const ModsManager: React.FC = () => {
           mod_ids: allModIds,
           enabled_mod_ids: selectedModIds.filter(id => allModIds.includes(id)),
           name: parsedMod.name || undefined,
-          is_enabled: selectedModIds.length > 0
+          is_enabled: false, // Always added to the known library
+          dependencies: parsedMod.dependencies.map(d => d.workshop_id)
         });
         resetAddForm();
         loadMods();
@@ -284,6 +309,123 @@ export const ModsManager: React.FC = () => {
       loadMods(); // Reload to get current state
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Re-read every known and server mod from the Workshop to (re)build the
+  // dependency list for each. Used to backfill dependencies on mods that were
+  // added via import/line/collection (which do not carry dependency data).
+
+  // Rebuild dependencies for a single mod. Updates the local list in realtime
+  // on success. Retries a few times with backoff on transient errors (e.g.
+  // Steam 429), then reports the error so the caller can mark it for retry.
+  const rebuildOneMod = async (mod: Mod): Promise<{ ok: boolean; error?: string }> => {
+    if (!selectedServerId) return { ok: false, error: 'no server' };
+    const url = `https://steamcommunity.com/sharedfiles/filedetails/?id=${mod.workshop_id}`;
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (importAbortRef.current) return { ok: false, error: 'cancelled' };
+      try {
+        const parsed = await modsAPI.parse(url);
+        const updated = await modsAPI.update(selectedServerId, mod.id, {
+          dependencies: parsed.dependencies.map(d => d.workshop_id)
+        });
+        // Realtime: swap the fresh mod into the local list so the UI reflects
+        // the new dependencies immediately.
+        setMods(prev => prev.map(m => (m.id === updated.id ? updated : m)));
+        return { ok: true };
+      } catch (modErr: any) {
+        const code = modErr.response?.status;
+        console.warn(`Failed to rebuild dependencies for ${mod.workshop_id} (attempt ${attempt}):`, modErr);
+        if (attempt < maxAttempts && !importAbortRef.current) {
+          setRebuildProgress(p => ({
+            ...p,
+            status: t('mods.rebuildDepsRetry').replace('{code}', code ? String(code) : 'error')
+          }));
+          // Wait 5s before retrying, checking for cancel in 1s slices.
+          for (let s = 0; s < 5 && !importAbortRef.current; s++) {
+            await sleep(1000);
+          }
+        } else {
+          return { ok: false, error: code ? String(code) : (modErr.message || 'error') };
+        }
+      }
+    }
+    return { ok: false, error: 'error' };
+  };
+
+  const handleRebuildDependencies = async (mode: 'all' | 'unknown' = 'all') => {
+    if (!selectedServerId || mods.length === 0) return;
+    // "unknown" mode only (re)checks mods whose dependencies were never resolved.
+    const snapshot = mode === 'unknown'
+      ? mods.filter(m => !m.dependencies_checked)
+      : [...mods];
+    if (snapshot.length === 0) return;
+    setRebuildingDeps(true);
+    setError(null);
+    importAbortRef.current = false;
+    setRebuildItemStatus({});
+    setRebuildErrors({});
+    setRebuildProgress({ current: 0, total: snapshot.length, currentId: '', status: '' });
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    try {
+      for (let i = 0; i < snapshot.length; i++) {
+        if (importAbortRef.current) break;
+        const mod = snapshot[i];
+        setRebuildProgress({ current: i + 1, total: snapshot.length, currentId: mod.workshop_id, status: '' });
+        setRebuildItemStatus(prev => ({ ...prev, [mod.id]: 'pending' }));
+
+        const res = await rebuildOneMod(mod);
+        if (res.ok) {
+          setRebuildItemStatus(prev => ({ ...prev, [mod.id]: 'ok' }));
+          setRebuildErrors(prev => { const n = { ...prev }; delete n[mod.id]; return n; });
+        } else if (!importAbortRef.current) {
+          setRebuildItemStatus(prev => ({ ...prev, [mod.id]: 'error' }));
+          setRebuildErrors(prev => ({ ...prev, [mod.id]: res.error || 'error' }));
+        }
+
+        // Throttle to ~1 request/second between mods to avoid Steam 429.
+        if (i < snapshot.length - 1 && !importAbortRef.current) {
+          await sleep(1000);
+        }
+      }
+    } catch (err: any) {
+      setError(err.response?.data?.detail || t('mods.rebuildDepsError'));
+    } finally {
+      setRebuildingDeps(false);
+      setRebuildProgress({ current: 0, total: 0, currentId: '', status: '' });
+      // Temporary checkmarks disappear once the whole operation completes;
+      // error markers persist so the user can retry the failed mods.
+      setRebuildItemStatus(prev => {
+        const next: Record<number, 'pending' | 'ok' | 'error'> = {};
+        for (const [id, st] of Object.entries(prev)) {
+          if (st === 'error') next[Number(id)] = 'error';
+        }
+        return next;
+      });
+    }
+  };
+
+  // Retry rebuilding dependencies for a single failed mod.
+  const retryRebuildOne = async (mod: Mod) => {
+    if (rebuildingDeps) return;
+    importAbortRef.current = false;
+    setRebuildItemStatus(prev => ({ ...prev, [mod.id]: 'pending' }));
+    const res = await rebuildOneMod(mod);
+    if (res.ok) {
+      setRebuildErrors(prev => { const n = { ...prev }; delete n[mod.id]; return n; });
+      setRebuildItemStatus(prev => ({ ...prev, [mod.id]: 'ok' }));
+      // Temporary checkmark: clear it after a short delay.
+      setTimeout(() => {
+        setRebuildItemStatus(prev => {
+          if (prev[mod.id] !== 'ok') return prev;
+          const n = { ...prev }; delete n[mod.id]; return n;
+        });
+      }, 3000);
+    } else {
+      setRebuildItemStatus(prev => ({ ...prev, [mod.id]: 'error' }));
+      setRebuildErrors(prev => ({ ...prev, [mod.id]: res.error || 'error' }));
     }
   };
 
@@ -675,9 +817,9 @@ export const ModsManager: React.FC = () => {
           await modsAPI.add(selectedServerId, {
             workshop_id: mod.workshop_id,
             mod_ids: mod.mod_ids,
-            enabled_mod_ids: mod.mod_ids, // Enable all by default
+            enabled_mod_ids: mod.mod_ids, // Pre-selected, ready when staged to server
             name: mod.name || undefined,
-            is_enabled: true
+            is_enabled: false // Always added to the known library
           });
           
           results.push({
@@ -757,6 +899,27 @@ export const ModsManager: React.FC = () => {
   const filteredKnownMods = knownMods.filter(matchesSearch);
 
   const enabledCount = serverMods.reduce((count, m) => count + m.enabled_mod_ids.length, 0);
+  // Mods whose dependencies were never resolved yet (drive the "update unknown" button).
+  const uncheckedCount = mods.filter(m => !m.dependencies_checked).length;
+
+  // Resolve a dependency workshop_id to a friendly label using any known/server mod.
+  const modByWorkshopId = new Map(mods.map(m => [m.workshop_id, m]));
+  const depLabel = (wid: string) => modByWorkshopId.get(wid)?.name || wid;
+
+  // Server-panel ordering validation: a mod must sit AFTER all of its
+  // dependencies. Flag mods whose dependency appears later in the list.
+  const serverIndexByWorkshop = new Map<string, number>();
+  serverMods.forEach((m, i) => serverIndexByWorkshop.set(m.workshop_id, i));
+  const misorderedIds = new Set<number>();
+  serverMods.forEach((m, i) => {
+    for (const depWid of m.dependencies) {
+      const depIndex = serverIndexByWorkshop.get(depWid);
+      if (depIndex !== undefined && depIndex > i) {
+        misorderedIds.add(m.id);
+        break;
+      }
+    }
+  });
 
   const selectedServerCount = serverMods.filter(m => selectedIds.has(m.id)).length;
   const selectedKnownCount = knownMods.filter(m => selectedIds.has(m.id)).length;
@@ -766,6 +929,17 @@ export const ModsManager: React.FC = () => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
+      return next;
+    });
+  };
+
+  // Toggle select-all for a panel (selects/deselects every mod in it).
+  const toggleSelectAll = (panelMods: Mod[]) => {
+    setSelectedIds(prev => {
+      const allSelected = panelMods.length > 0 && panelMods.every(m => prev.has(m.id));
+      const next = new Set(prev);
+      if (allSelected) panelMods.forEach(m => next.delete(m.id));
+      else panelMods.forEach(m => next.add(m.id));
       return next;
     });
   };
@@ -790,7 +964,34 @@ export const ModsManager: React.FC = () => {
     }
   };
 
-  // Move selected known mods into the server panel (appended at the end).
+  // Move ALL known mods into the server panel (appended at the end). Warns first.
+  const moveAllToServer = async () => {
+    if (knownMods.length === 0) return;
+    if (!confirm(t('mods.moveAllToServerConfirm').replace('{count}', String(knownMods.length)))) return;
+    const newServerIds = [...serverMods.map(m => m.id), ...knownMods.map(m => m.id)];
+    await commitServerOrder(newServerIds);
+  };
+
+  // Move ALL server mods back to the known panel. Warns first.
+  const moveAllToKnown = async () => {
+    if (serverMods.length === 0) return;
+    if (!confirm(t('mods.moveAllToKnownConfirm').replace('{count}', String(serverMods.length)))) return;
+    await commitServerOrder([]);
+  };
+
+  // Move a single server mod back to the known panel.
+  const moveOneToKnown = async (mod: Mod) => {
+    const newServerIds = serverMods.map(m => m.id).filter(id => id !== mod.id);
+    await commitServerOrder(newServerIds);
+  };
+
+  // Move a single known mod onto the server panel (appended at the end).
+  const moveOneToServer = async (mod: Mod) => {
+    const newServerIds = [...serverMods.map(m => m.id), mod.id];
+    await commitServerOrder(newServerIds);
+  };
+
+  // Move only the checkboxed known mods into the server panel (appended).
   const moveSelectedToServer = async () => {
     const toAdd = knownMods.filter(m => selectedIds.has(m.id)).map(m => m.id);
     if (toAdd.length === 0) return;
@@ -799,7 +1000,7 @@ export const ModsManager: React.FC = () => {
     await commitServerOrder(newServerIds);
   };
 
-  // Move selected server mods back to the known panel.
+  // Move only the checkboxed server mods back to the known panel.
   const moveSelectedToKnown = async () => {
     const toRemove = new Set(serverMods.filter(m => selectedIds.has(m.id)).map(m => m.id));
     if (toRemove.size === 0) return;
@@ -838,20 +1039,35 @@ export const ModsManager: React.FC = () => {
     await commitServerOrder(newServerIds);
   };
 
-  const renderModCard = (mod: Mod, index: number) => (
+  const renderModCard = (mod: Mod, index: number, panel: 'server' | 'known') => (
     <Draggable key={mod.id} draggableId={`mod-${mod.id}`} index={index}>
       {(provided, snapshot) => {
         const isExpanded = expandedMods.has(mod.id);
         const hasMultipleModIds = mod.mod_ids.length > 1;
+        const isMisordered = panel === 'server' && misorderedIds.has(mod.id);
+        const depLabels = mod.dependencies.map(depLabel);
         return (
           <div
             ref={provided.innerRef}
             {...provided.draggableProps}
             className={`bg-gray-800 border rounded-lg mb-2 transition ${
-              snapshot.isDragging ? 'border-blue-500 shadow-lg shadow-blue-500/20' : 'border-gray-700'
+              snapshot.isDragging
+                ? 'border-blue-500 shadow-lg shadow-blue-500/20'
+                : isMisordered
+                ? 'border-amber-500 bg-amber-900/10'
+                : 'border-gray-700'
             }`}
           >
             <div className="flex items-center gap-2 px-3 py-2">
+              {panel === 'known' && (
+                <button
+                  onClick={() => moveOneToServer(mod)}
+                  className="p-1.5 bg-green-700 hover:bg-green-600 text-white rounded transition shrink-0"
+                  title={t('mods.moveToServer')}
+                >
+                  <ArrowLeft size={14} />
+                </button>
+              )}
               <span
                 {...provided.dragHandleProps}
                 className="text-gray-500 hover:text-gray-300 cursor-grab active:cursor-grabbing"
@@ -863,7 +1079,7 @@ export const ModsManager: React.FC = () => {
                 type="checkbox"
                 checked={selectedIds.has(mod.id)}
                 onChange={() => toggleSelected(mod.id)}
-                className="w-4 h-4 rounded bg-gray-600 border-gray-500 text-blue-500 shrink-0"
+                className="w-4 h-4 rounded bg-gray-600 border-gray-500 text-blue-500 shrink-0 cursor-pointer"
                 title={t('mods.selectMod')}
                 onClick={(e) => e.stopPropagation()}
               />
@@ -899,16 +1115,86 @@ export const ModsManager: React.FC = () => {
                   className="p-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded transition"
                   title={t('mods.openWorkshop')}
                 >
-                  <ExternalLink size={14} />
+                  <SteamIcon size={14} />
                 </a>
               )}
-              <button
-                onClick={() => handleDeleteMod(mod)}
-                className="p-1.5 bg-red-600 hover:bg-red-700 text-white rounded transition"
-                title={t('common.delete')}
-              >
-                <Trash2 size={14} />
-              </button>
+              {!mod.dependencies_checked && !rebuildItemStatus[mod.id] && (
+                <button
+                  onClick={() => retryRebuildOne(mod)}
+                  disabled={rebuildingDeps}
+                  className="p-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded transition"
+                  title={t('mods.checkDeps')}
+                >
+                  <Search size={14} />
+                </button>
+              )}
+              {mod.dependencies.length > 0 && (
+                <span
+                  className={`flex items-center p-1.5 ${isMisordered ? 'text-amber-400' : 'text-gray-400'}`}
+                  title={
+                    isMisordered
+                      ? `${t('mods.dependencyOrderWrong')}\n${t('mods.hasDependencies')}: ${depLabels.join(', ')}`
+                      : `${t('mods.hasDependencies')}: ${depLabels.join(', ')}`
+                  }
+                >
+                  {isMisordered ? <AlertTriangle size={14} /> : <Link2 size={14} />}
+                </span>
+              )}
+              {(() => {
+                const st = rebuildItemStatus[mod.id];
+                if (st === 'pending') {
+                  return (
+                    <span className="flex items-center p-1.5 text-blue-400" title={t('mods.rebuildDeps')}>
+                      <Loader2 size={14} className="animate-spin" />
+                    </span>
+                  );
+                }
+                if (st === 'ok') {
+                  return (
+                    <span className="flex items-center p-1.5 text-green-400" title={t('mods.updated')}>
+                      <Check size={14} />
+                    </span>
+                  );
+                }
+                if (st === 'error') {
+                  return (
+                    <span className="flex items-center">
+                      <span
+                        className="flex items-center p-1.5 text-red-400"
+                        title={`${t('mods.rebuildDepsError')}${rebuildErrors[mod.id] ? `: ${rebuildErrors[mod.id]}` : ''}`}
+                      >
+                        <AlertCircle size={14} />
+                      </span>
+                      <button
+                        onClick={() => retryRebuildOne(mod)}
+                        disabled={rebuildingDeps}
+                        className="p-1.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded transition"
+                        title={t('mods.rebuildRetryOne')}
+                      >
+                        <RefreshCw size={14} />
+                      </button>
+                    </span>
+                  );
+                }
+                return null;
+              })()}
+              {panel === 'server' ? (
+                <button
+                  onClick={() => moveOneToKnown(mod)}
+                  className="p-1.5 bg-green-700 hover:bg-green-600 text-white rounded transition"
+                  title={t('mods.moveToKnown')}
+                >
+                  <ArrowRight size={14} />
+                </button>
+              ) : (
+                <button
+                  onClick={() => handleDeleteMod(mod)}
+                  className="p-1.5 bg-red-600 hover:bg-red-700 text-white rounded transition"
+                  title={t('common.delete')}
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
             </div>
 
             {isExpanded && hasMultipleModIds && (
@@ -972,6 +1258,23 @@ export const ModsManager: React.FC = () => {
             title={t('mods.clearAll')}
           >
             <Trash2 size={18} />
+          </button>
+          <button
+            onClick={() => handleRebuildDependencies('all')}
+            disabled={rebuildingDeps || loading || mods.length === 0}
+            className="flex items-center gap-2 bg-amber-600 hover:bg-amber-700 disabled:bg-amber-800 text-white px-3 py-2 rounded-lg transition"
+            title={t('mods.rebuildDepsAll')}
+          >
+            {rebuildingDeps ? <Loader2 size={18} className="animate-spin" /> : <Link2 size={18} />}
+          </button>
+          <button
+            onClick={() => handleRebuildDependencies('unknown')}
+            disabled={rebuildingDeps || loading || uncheckedCount === 0}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-800 text-white px-3 py-2 rounded-lg transition"
+            title={t('mods.rebuildDepsUnknown')}
+          >
+            <Search size={18} />
+            {uncheckedCount > 0 && <span className="text-xs font-semibold">{uncheckedCount}</span>}
           </button>
           <button
             onClick={loadMods}
@@ -1045,6 +1348,34 @@ export const ModsManager: React.FC = () => {
         </div>
       )}
 
+      {/* Rebuild dependencies progress */}
+      {rebuildingDeps && rebuildProgress.total > 0 && (
+        <div className="bg-amber-900/30 border border-amber-700 rounded-lg p-3 space-y-2">
+          <div className="flex items-center justify-between text-sm">
+            <span className="flex items-center gap-2 text-amber-200">
+              <Loader2 size={16} className="animate-spin" />
+              {t('mods.rebuildDeps')}: {rebuildProgress.current} / {rebuildProgress.total}
+            </span>
+            <span className="font-mono text-amber-400">{rebuildProgress.currentId}</span>
+            <button
+              onClick={() => { importAbortRef.current = true; }}
+              className="ml-2 bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded transition"
+            >
+              {t('common.cancel')}
+            </button>
+          </div>
+          {rebuildProgress.status && rebuildProgress.status !== 'ok' && (
+            <div className="text-xs text-red-300">{rebuildProgress.status}</div>
+          )}
+          <div className="w-full bg-gray-700 rounded-full h-2">
+            <div
+              className="bg-amber-500 h-2 rounded-full transition-all duration-300"
+              style={{ width: `${(rebuildProgress.current / rebuildProgress.total) * 100}%` }}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Search */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
@@ -1082,20 +1413,38 @@ export const ModsManager: React.FC = () => {
             {/* Server (left) panel - staged, ordered */}
             <div className="bg-gray-800/40 rounded-lg border border-gray-700 flex flex-col">
               <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between gap-2">
-                <h3 className="font-semibold text-white flex items-center gap-2">
-                  <Play size={16} className="text-purple-400" />
-                  {t('mods.serverPanel')}
-                </h3>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => toggleSelectAll(serverMods)}
+                    disabled={serverMods.length === 0}
+                    className="flex items-center text-gray-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed p-1.5 rounded transition"
+                    title={t('mods.selectAll')}
+                  >
+                    <CheckSquare size={16} />
+                  </button>
+                  <h3 className="font-semibold text-white flex items-center gap-2">
+                    <Play size={16} className="text-purple-400" />
+                    {t('mods.serverPanel')}
+                    <span className="text-sm text-gray-400 font-normal">({serverMods.length})</span>
+                  </h3>
+                </div>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={moveSelectedToKnown}
                     disabled={selectedServerCount === 0}
-                    className="flex items-center gap-1 text-sm font-bold bg-green-700 hover:bg-green-600 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded transition"
-                    title={t('mods.moveToKnown')}
+                    className="flex items-center gap-1 text-sm font-bold bg-blue-700 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded transition"
+                    title={t('mods.moveSelected')}
                   >
-                    &gt;&gt;&gt;&gt;&gt;
+                    {t('mods.moveSelected')} &gt;&gt;
                   </button>
-                  <span className="text-sm text-gray-400">{serverMods.length}</span>
+                  <button
+                    onClick={moveAllToKnown}
+                    disabled={serverMods.length === 0}
+                    className="flex items-center gap-1 text-sm font-bold bg-green-700 hover:bg-green-600 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded transition"
+                    title={t('mods.removeAll')}
+                  >
+                    {t('mods.removeAll')} &gt;&gt;&gt;&gt;&gt;
+                  </button>
                 </div>
               </div>
               <Droppable droppableId="server">
@@ -1107,7 +1456,7 @@ export const ModsManager: React.FC = () => {
                       snapshot.isDraggingOver ? 'bg-purple-900/10' : ''
                     }`}
                   >
-                    {filteredServerMods.map((mod, index) => renderModCard(mod, index))}
+                    {filteredServerMods.map((mod, index) => renderModCard(mod, index, 'server'))}
                     {provided.placeholder}
                     {filteredServerMods.length === 0 && (
                       <div className="text-center text-gray-500 text-sm py-10">
@@ -1122,19 +1471,37 @@ export const ModsManager: React.FC = () => {
             {/* Known (right) panel - alphabetical library */}
             <div className="bg-gray-800/40 rounded-lg border border-gray-700 flex flex-col">
               <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between gap-2">
-                <h3 className="font-semibold text-white flex items-center gap-2">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={moveAllToServer}
+                    disabled={knownMods.length === 0}
+                    className="flex items-center gap-1 text-sm font-bold bg-green-700 hover:bg-green-600 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded transition"
+                    title={t('mods.addAll')}
+                  >
+                    &lt;&lt;&lt;&lt;&lt; {t('mods.addAll')}
+                  </button>
                   <button
                     onClick={moveSelectedToServer}
                     disabled={selectedKnownCount === 0}
-                    className="flex items-center gap-1 text-sm font-bold bg-green-700 hover:bg-green-600 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded transition"
-                    title={t('mods.moveToServer')}
+                    className="flex items-center gap-1 text-sm font-bold bg-blue-700 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded transition"
+                    title={t('mods.moveSelected')}
                   >
-                    &lt;&lt;&lt;&lt;&lt;
+                    &lt;&lt; {t('mods.moveSelected')}
                   </button>
+                  <button
+                    onClick={() => toggleSelectAll(knownMods)}
+                    disabled={knownMods.length === 0}
+                    className="flex items-center text-gray-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed p-1.5 rounded transition"
+                    title={t('mods.selectAll')}
+                  >
+                    <CheckSquare size={16} />
+                  </button>
+                </div>
+                <h3 className="font-semibold text-white flex items-center gap-2">
                   <Package size={16} className="text-green-400" />
                   {t('mods.knownPanel')}
+                  <span className="text-sm text-gray-400 font-normal">({knownMods.length})</span>
                 </h3>
-                <span className="text-sm text-gray-400">{knownMods.length}</span>
               </div>
               <Droppable droppableId="known">
                 {(provided, snapshot) => (
@@ -1145,7 +1512,7 @@ export const ModsManager: React.FC = () => {
                       snapshot.isDraggingOver ? 'bg-green-900/10' : ''
                     }`}
                   >
-                    {filteredKnownMods.map((mod, index) => renderModCard(mod, index))}
+                    {filteredKnownMods.map((mod, index) => renderModCard(mod, index, 'known'))}
                     {provided.placeholder}
                     {filteredKnownMods.length === 0 && (
                       <div className="text-center text-gray-500 text-sm py-10">

@@ -1,5 +1,30 @@
 # Release Notes - PZ WebAdmin
 
+## v1.6.0
+
+### Highlights
+
+- **Two dependency update modes** on the Mods page:
+  - **Update all** — re-resolves dependencies for every mod in the list
+  - **Update unknown** — only resolves mods that were never checked before (fewer Steam requests)
+- **Per-mod dependency check** — each mod card has its own check button with live status (pending / success / error) and one-click retry on failure
+- **Realtime updates** — the mod list updates in place while dependencies are being resolved, instead of refreshing at the end
+- **Export/import now includes dependencies** — dependency data is preserved across export and import of mod lists
+- **Steam rate-limit protection** to reduce `429 Too Many Requests` errors:
+  - Request throttling (Workshop requests spaced ~1s apart, serialized)
+  - Browser-like request headers
+  - In-memory cache of already-resolved Workshop pages
+  - Automatic retry with backoff before marking a mod as failed
+- **429 treated as a real error** — rate-limit responses are surfaced instead of silently returning empty dependencies
+- **Timestamped backend logs** — server logs now include timestamps and consistent formatting
+
+### Notes
+
+- Mod dependencies are read from the public Steam Workshop page (Required Items block), since the Steam API does not expose them for Project Zomboid mods.
+- If you hit `429` errors, wait a minute and use **Update unknown** or per-mod retry instead of refreshing everything at once.
+
+---
+
 ## v1.5.0
 
 **Release Date:** June 16, 2026

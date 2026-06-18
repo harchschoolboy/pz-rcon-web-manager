@@ -36,6 +36,13 @@ async def run_migrations(conn):
         # Column already exists
         pass
 
+    # Migration: add dependencies column to server_mods table (required-mod workshop IDs)
+    try:
+        await conn.execute(text("ALTER TABLE server_mods ADD COLUMN dependencies TEXT"))
+    except Exception:
+        # Column already exists
+        pass
+
 
 async def init_db():
     """Initialize database - create all tables"""
