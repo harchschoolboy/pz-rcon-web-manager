@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { serverAPI, connectionAPI, commandAPI, modsAPI } from '../../api/client';
 import { useServerStore } from '../../store/serverStore';
 import { useI18n } from '../../i18n';
@@ -48,6 +48,37 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
       checkConnection(server.id);
     });
   }, [servers]);
+
+  // Keep the latest statuses readable inside the heartbeat interval without
+  // re-creating the timer on every status change.
+  const connectionStatusesRef = useRef(connectionStatuses);
+  connectionStatusesRef.current = connectionStatuses;
+
+  // Periodic heartbeat: actively verify servers we think are connected are still
+  // alive (real RCON round-trip on the backend). A restarted/killed server now
+  // flips to "disconnected" on its own instead of looking connected until the
+  // next manual action fails.
+  useEffect(() => {
+    if (servers.length === 0) return;
+    const HEARTBEAT_INTERVAL = 15000;
+    const interval = setInterval(() => {
+      servers.forEach(async (server) => {
+        if (connectionStatusesRef.current[server.id] !== 'connected') return;
+        try {
+          const result = await connectionAPI.heartbeat(server.id);
+          if (!result.connected) {
+            setConnectionStatuses((prev) => ({ ...prev, [server.id]: 'disconnected' }));
+            if (selectedServerId === server.id) setConnectionStatus('disconnected');
+          }
+        } catch (error) {
+          console.error('Heartbeat failed:', error);
+          setConnectionStatuses((prev) => ({ ...prev, [server.id]: 'disconnected' }));
+          if (selectedServerId === server.id) setConnectionStatus('disconnected');
+        }
+      });
+    }, HEARTBEAT_INTERVAL);
+    return () => clearInterval(interval);
+  }, [servers, selectedServerId, setConnectionStatus]);
 
   const loadServers = async () => {
     try {
@@ -122,16 +153,18 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
     }
   };
 
-  // Перестворює RCON-з'єднання: відключити, потім підключити знову.
+  // Перестворює RCON-з'єднання. Бекенд сам скидає старе (можливо мертве)
+  // зʼєднання перед новим, тому досить лише connect. Без сповіщень-алертів:
+  // при помилці просто показуємо стан "відключено".
   const handleReconnect = async (serverId: number) => {
     setConnectionStatuses((prev) => ({ ...prev, [serverId]: 'connecting' }));
     try {
-      await connectionAPI.disconnect(serverId);
       await connectionAPI.connect(serverId);
       await checkConnection(serverId);
-    } catch (error: any) {
+    } catch (error) {
+      console.error('Reconnect failed:', error);
       setConnectionStatuses((prev) => ({ ...prev, [serverId]: 'disconnected' }));
-      alert(`${t('error.connecting')}: ${error.response?.data?.detail || error.message}`);
+      if (selectedServerId === serverId) setConnectionStatus('disconnected');
     }
   };
 

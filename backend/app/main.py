@@ -311,6 +311,13 @@ async def get_players_count(server_id: int) -> dict:
         response = rcon_manager.execute_command(server_id, "players")
         if response is None:
             return {"connected": False, "current": 0, "max": 0}
+
+        # A restarted/dead server can leave a socket that accepts the send but
+        # never replies, so execute() returns its "no reply" placeholder or an
+        # empty string. A healthy "players" command always echoes back text, so
+        # treat an empty/placeholder reply as a lost connection.
+        if not response.strip() or response.strip() == "(команда виконана без відповіді)":
+            return {"connected": False, "current": 0, "max": 0}
         
         # Parse response like "Players connected (2):"
         import re
@@ -571,6 +578,10 @@ async def connect_to_server(
     username = crypto_service.decrypt(server.username) if server.username else None
     
     try:
+        # Drop any existing (possibly stale/dead) connection first so reconnect
+        # always gets a fresh socket and never leaks the old one.
+        if rcon_manager.is_connected(server_id):
+            rcon_manager.disconnect(server_id)
         await rcon_manager.connect(server_id, server.host, server.port, password, username)
         # Broadcast connection status via WebSocket
         await ws_manager.broadcast_connection_status(server_id, True)
@@ -615,6 +626,36 @@ async def get_connection_status(
         connected=is_connected,
         authenticated=is_connected
     )
+
+
+@app.get("/servers/{server_id}/heartbeat")
+async def heartbeat(
+    server_id: int,
+    current_user: str = Depends(get_current_user)
+):
+    """Live liveness check for a server connection.
+
+    Unlike /status (which only reports the cached pool state), this runs a real
+    RCON round-trip so a server that was restarted/killed is detected as down.
+    A dead connection is dropped from the pool and broadcast as disconnected.
+    """
+    if not rcon_manager.is_connected(server_id):
+        return {"connected": False, "current": 0, "max": 0}
+
+    info = await get_players_count(server_id)
+
+    if not info["connected"]:
+        # The round-trip failed: make sure the stale socket is fully dropped
+        # and notify any listeners so the UI flips to disconnected immediately.
+        if rcon_manager.is_connected(server_id):
+            rcon_manager.disconnect(server_id)
+        await ws_manager.broadcast_connection_status(server_id, False)
+
+    return {
+        "connected": info["connected"],
+        "current": info["current"],
+        "max": info["max"],
+    }
 
 
 # ============= Command Execution =============
@@ -1036,6 +1077,20 @@ async def parse_collection_url(
         )
 
 
+def _effective_enabled_mod_ids(mod_ids: list, enabled_mod_ids: list) -> list:
+    """Resolve which mod_ids should be treated as enabled for a workshop item.
+
+    A workshop item that contains exactly one mod has no meaningful sub-selection:
+    if the item is present at all, that single mod must be enabled. Otherwise the
+    item ends up adding the WorkshopItems entry without a matching Mods entry,
+    which is the broken state reported on apply/export/import.
+    Multi-mod items keep their explicit selection.
+    """
+    if len(mod_ids) == 1:
+        return list(mod_ids)
+    return enabled_mod_ids
+
+
 @app.get("/servers/{server_id}/mods", response_model=List[ModResponse])
 async def list_server_mods(
     server_id: int,
@@ -1054,7 +1109,10 @@ async def list_server_mods(
     response = []
     for mod in mods:
         mod_ids = mod.mod_ids.split(';') if mod.mod_ids else []
-        enabled_mod_ids = mod.enabled_mod_ids.split(';') if mod.enabled_mod_ids else []
+        enabled_mod_ids = _effective_enabled_mod_ids(
+            mod_ids,
+            mod.enabled_mod_ids.split(';') if mod.enabled_mod_ids else []
+        )
         response.append(ModResponse(
             id=mod.id,
             server_id=mod.server_id,
@@ -1219,12 +1277,16 @@ async def set_server_mods_order(
 
     response = []
     for mod in refreshed:
+        mod_ids = mod.mod_ids.split(';') if mod.mod_ids else []
         response.append(ModResponse(
             id=mod.id,
             server_id=mod.server_id,
             workshop_id=mod.workshop_id,
-            mod_ids=mod.mod_ids.split(';') if mod.mod_ids else [],
-            enabled_mod_ids=mod.enabled_mod_ids.split(';') if mod.enabled_mod_ids else [],
+            mod_ids=mod_ids,
+            enabled_mod_ids=_effective_enabled_mod_ids(
+                mod_ids,
+                mod.enabled_mod_ids.split(';') if mod.enabled_mod_ids else []
+            ),
             name=mod.name,
             is_enabled=mod.is_enabled,
             position=mod.position,
@@ -1365,7 +1427,11 @@ async def apply_mods_to_server(
     all_workshop_ids = []
     
     for mod in enabled_mods:
-        enabled_mod_ids = mod.enabled_mod_ids.split(';') if mod.enabled_mod_ids else []
+        mod_ids = mod.mod_ids.split(';') if mod.mod_ids else []
+        enabled_mod_ids = _effective_enabled_mod_ids(
+            mod_ids,
+            mod.enabled_mod_ids.split(';') if mod.enabled_mod_ids else []
+        )
         if enabled_mod_ids:
             all_mod_ids.extend(enabled_mod_ids)
             # Add workshop_id once for each mod record that has enabled mod_ids
@@ -1422,7 +1488,10 @@ async def export_server_mods(
             ModCreate(
                 workshop_id=mod.workshop_id,
                 mod_ids=mod.mod_ids.split(';') if mod.mod_ids else [],
-                enabled_mod_ids=mod.enabled_mod_ids.split(';') if mod.enabled_mod_ids else [],
+                enabled_mod_ids=_effective_enabled_mod_ids(
+                    mod.mod_ids.split(';') if mod.mod_ids else [],
+                    mod.enabled_mod_ids.split(';') if mod.enabled_mod_ids else []
+                ),
                 name=mod.name,
                 is_enabled=mod.is_enabled,
                 dependencies=mod.dependencies.split(';') if mod.dependencies else []
@@ -1462,7 +1531,10 @@ async def download_server_mods(
             {
                 "workshop_id": mod.workshop_id,
                 "mod_ids": mod.mod_ids.split(';') if mod.mod_ids else [],
-                "enabled_mod_ids": mod.enabled_mod_ids.split(';') if mod.enabled_mod_ids else [],
+                "enabled_mod_ids": _effective_enabled_mod_ids(
+                    mod.mod_ids.split(';') if mod.mod_ids else [],
+                    mod.enabled_mod_ids.split(';') if mod.enabled_mod_ids else []
+                ),
                 "name": mod.name,
                 "is_enabled": mod.is_enabled,
                 "dependencies": mod.dependencies.split(';') if mod.dependencies else []
@@ -1496,6 +1568,10 @@ async def import_server_mods(
     updated = 0
     
     for mod_data in mods_export.mods:
+        # Normalize single-mod items: a one-mod workshop item that is present
+        # must have its mod enabled, otherwise the workshop entry is imported
+        # without a matching Mods entry (and is_enabled below would be wrong).
+        normalized_enabled = _effective_enabled_mod_ids(mod_data.mod_ids, mod_data.enabled_mod_ids)
         # Check if already exists
         result = await db.execute(
             select(ServerMod).where(
@@ -1513,7 +1589,7 @@ async def import_server_mods(
             
             # Merge enabled_mod_ids
             existing_enabled = existing.enabled_mod_ids.split(';') if existing.enabled_mod_ids else []
-            new_enabled = list(set(existing_enabled + mod_data.enabled_mod_ids))
+            new_enabled = list(set(existing_enabled + normalized_enabled))
             existing.enabled_mod_ids = ';'.join(new_enabled)
             existing.is_enabled = len(new_enabled) > 0
             # Dependencies: prefer imported list when present, else keep existing.
@@ -1527,9 +1603,9 @@ async def import_server_mods(
                 server_id=server_id,
                 workshop_id=mod_data.workshop_id,
                 mod_ids=';'.join(mod_data.mod_ids) if mod_data.mod_ids else '',
-                enabled_mod_ids=';'.join(mod_data.enabled_mod_ids) if mod_data.enabled_mod_ids else '',
+                enabled_mod_ids=';'.join(normalized_enabled) if normalized_enabled else '',
                 name=mod_data.name,
-                is_enabled=len(mod_data.enabled_mod_ids) > 0,
+                is_enabled=len(normalized_enabled) > 0,
                 dependencies=';'.join(mod_data.dependencies) if mod_data.dependencies else None,
                 workshop_url=f"https://steamcommunity.com/sharedfiles/filedetails/?id={mod_data.workshop_id}"
             )

@@ -49,6 +49,7 @@ export const ModsManager: React.FC = () => {
   // Apply state
   const [applying, setApplying] = useState(false);
   const [applyResult, setApplyResult] = useState<string | null>(null);
+  const [showApplyPreview, setShowApplyPreview] = useState(false);
   
   // Sync state
   const [syncing, setSyncing] = useState(false);
@@ -919,6 +920,20 @@ export const ModsManager: React.FC = () => {
   // Mods whose dependencies were never resolved yet (drive the "update unknown" button).
   const uncheckedCount = mods.filter(m => !m.dependencies_checked).length;
 
+  // Preview of the exact lines that will be pushed to the server on Apply.
+  // Mirrors the backend: only enabled mod_ids contribute, workshop ids are added
+  // once per record that has at least one enabled mod_id, in server-panel order.
+  const applyAllModIds: string[] = [];
+  const applyWorkshopIds: string[] = [];
+  serverMods.forEach(m => {
+    if (m.enabled_mod_ids.length > 0) {
+      applyAllModIds.push(...m.enabled_mod_ids);
+      applyWorkshopIds.push(m.workshop_id);
+    }
+  });
+  const applyModsLine = `Mods=${applyAllModIds.join(';')}`;
+  const applyWorkshopLine = `WorkshopItems=${applyWorkshopIds.join(';')}`;
+
   // Resolve a dependency workshop_id to a friendly label using any known/server mod.
   const modByWorkshopId = new Map(mods.map(m => [m.workshop_id, m]));
   const depLabel = (wid: string) => modByWorkshopId.get(wid)?.name || wid;
@@ -1383,6 +1398,35 @@ export const ModsManager: React.FC = () => {
           {applyResult}
         </div>
       )}
+
+      {/* Apply Preview: exact lines that will be pushed on Apply */}
+      <div className="bg-gray-800/60 border border-gray-700 rounded-lg">
+        <button
+          onClick={() => setShowApplyPreview(v => !v)}
+          className="w-full flex items-center justify-between px-3 py-2 text-sm text-gray-200 hover:text-white transition"
+        >
+          <span className="flex items-center gap-2">
+            <FileText size={16} className="text-purple-400" />
+            {t('mods.applyPreviewTitle')}
+            <span className="text-gray-500">
+              ({applyAllModIds.length} {t('mods.applyPreviewMods')}, {applyWorkshopIds.length} {t('mods.applyPreviewWorkshops')})
+            </span>
+          </span>
+          {showApplyPreview ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+        </button>
+        {showApplyPreview && (
+          <div className="px-3 pb-3 space-y-2">
+            <div>
+              <div className="text-xs text-gray-400 mb-1">Mods</div>
+              <pre className="bg-gray-900 border border-gray-700 rounded p-2 text-xs text-green-300 font-mono whitespace-pre-wrap break-all select-all">{applyModsLine}</pre>
+            </div>
+            <div>
+              <div className="text-xs text-gray-400 mb-1">WorkshopItems</div>
+              <pre className="bg-gray-900 border border-gray-700 rounded p-2 text-xs text-blue-300 font-mono whitespace-pre-wrap break-all select-all">{applyWorkshopLine}</pre>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Rebuild dependencies progress */}
       {rebuildingDeps && rebuildProgress.total > 0 && (
