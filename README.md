@@ -16,6 +16,14 @@ Web-based administration panel for Project Zomboid dedicated servers. Manage you
 - **Authentication** — secure access with username/password
 - **Real-time status** — WebSocket-based connection status and player count
 
+## What's New in v1.6.2
+
+- **Missing dependency warnings** — mods whose known dependency is not staged on the server get a red outline, and Apply shows a confirmation listing the missing dependencies
+- **Apply preview** — a collapsible panel shows the exact `Mods=` and `WorkshopItems=` lines that will be pushed to the server
+- **Single-mod item fix** — a workshop item with a single mod is no longer added without its actual mod (no more orphaned `WorkshopItems` entries)
+- **Connection heartbeat** — a periodic live check detects a restarted or stopped server automatically and flips the card to disconnected
+- **Reconnect fix** — the Reconnect button now reconnects cleanly without spurious "not connected" error notifications
+
 ## What's New in v1.6.0
 
 - **Two dependency update modes** — update dependencies for **all** mods, or only for **unchecked** mods that were never resolved

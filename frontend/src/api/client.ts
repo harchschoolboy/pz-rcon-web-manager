@@ -166,6 +166,12 @@ export const connectionAPI = {
     const { data } = await api.get(`/servers/${serverId}/status`);
     return data;
   },
+
+  // Live liveness check (real RCON round-trip) used for periodic heartbeats.
+  heartbeat: async (serverId: number): Promise<{ connected: boolean; current: number; max: number }> => {
+    const { data } = await api.get(`/servers/${serverId}/heartbeat`);
+    return data;
+  },
 };
 
 // ========== Command Execution ==========

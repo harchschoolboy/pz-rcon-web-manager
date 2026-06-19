@@ -1,5 +1,22 @@
 # Release Notes - PZ WebAdmin
 
+## v1.6.2
+
+### Highlights
+
+- **Missing dependency detection** — a server mod whose known dependency is not present in the server panel now gets a **red outline** and a red dependency icon with a tooltip listing the missing items. Detection also covers the case where a dependency is moved out of the server panel.
+- **Apply warning for missing dependencies** — pressing **Apply** shows a confirmation listing every mod with missing dependencies before sending the configuration.
+- **Apply lines preview** — a collapsible panel shows the exact `Mods=...` and `WorkshopItems=...` lines (with counts) that will be pushed to the server on Apply.
+- **Single-mod workshop item fix** — a workshop item containing exactly one mod is now always treated as enabled when present, so it can no longer be added as a `WorkshopItems` entry without its matching `Mods` entry. This fix applies across list, apply, export, download and import, and auto-corrects already-broken records on read.
+- **Connection heartbeat** — a periodic live RCON round-trip detects a restarted or stopped server automatically and flips the card to disconnected, instead of looking connected until the next action fails.
+- **Reconnect button fix** — Reconnect now reconnects cleanly (the backend drops any stale connection first) and no longer shows a "not connected" error notification on failure.
+
+### Notes
+
+- Existing broken single-mod records are corrected automatically on read; no manual migration is required.
+
+---
+
 ## v1.6.0
 
 ### Highlights
