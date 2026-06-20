@@ -1,5 +1,17 @@
 # Release Notes - PZ WebAdmin
 
+## v1.6.3
+
+### Highlights
+
+- **Large RCON response fix** — the RCON client now reads responses as proper length-framed packets instead of assuming each TCP read is one complete packet. Large responses (for example the `WorkshopItems=` line returned by `showoptions`) were previously split across lines and lost ~12 bytes at each read boundary, causing only part of the mods to be received. Bodies are now reassembled in order with no separator, reproducing the server's output exactly.
+
+### Notes
+
+- Backend-only change. No database migration or configuration change is required.
+
+---
+
 ## v1.6.2
 
 ### Highlights

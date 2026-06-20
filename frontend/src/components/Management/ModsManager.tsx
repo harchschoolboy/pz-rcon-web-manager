@@ -6,7 +6,7 @@ import { useI18n } from '../../i18n';
 import { 
   Package, RefreshCw, ExternalLink, AlertCircle, Search, 
   Plus, Trash2, Download, Upload, Play, Loader2, Check, X,
-  Link, DownloadCloud, ChevronDown, ChevronRight, FileText, AlertTriangle, GripVertical, ArrowRight, ArrowLeft, CheckSquare, Link2
+  Link, DownloadCloud, ChevronDown, ChevronRight, FileText, AlertTriangle, GripVertical, ArrowRight, ArrowLeft, CheckSquare, Link2, Tag
 } from 'lucide-react';
 
 // Steam Workshop brand glyph (lucide-react has no Steam icon).
@@ -65,6 +65,12 @@ export const ModsManager: React.FC = () => {
   const [rebuildItemStatus, setRebuildItemStatus] = useState<Record<number, 'pending' | 'ok' | 'error'>>({});
   const [rebuildErrors, setRebuildErrors] = useState<Record<number, string>>({});
   const [disableMissing, setDisableMissing] = useState(true);
+
+  // Refresh-names state: re-fetch the real Steam title for mods whose name is a
+  // placeholder/unknown (e.g. after a Steam 429 during sync/add).
+  const [refreshingNames, setRefreshingNames] = useState(false);
+  const [refreshNameProgress, setRefreshNameProgress] = useState({ current: 0, total: 0, currentId: '' });
+  const [refreshNameStatus, setRefreshNameStatus] = useState<Record<number, 'pending' | 'ok' | 'error'>>({});
   
   // Import from line state
   const [importLineText, setImportLineText] = useState('');
@@ -427,6 +433,95 @@ export const ModsManager: React.FC = () => {
     } else {
       setRebuildItemStatus(prev => ({ ...prev, [mod.id]: 'error' }));
       setRebuildErrors(prev => ({ ...prev, [mod.id]: res.error || 'error' }));
+    }
+  };
+
+  // Refresh the real Steam title for a single mod. Retries a few times with
+  // backoff on transient errors (e.g. Steam 429). The backend goes through the
+  // shared 3s Steam throttle, so this is safe to call in a loop.
+  const refreshOneName = async (mod: Mod): Promise<{ ok: boolean; error?: string }> => {
+    if (!selectedServerId) return { ok: false, error: 'no server' };
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (importAbortRef.current) return { ok: false, error: 'cancelled' };
+      try {
+        const updated = await modsAPI.refreshName(selectedServerId, mod.id);
+        setMods(prev => prev.map(m => (m.id === updated.id ? updated : m)));
+        return { ok: true };
+      } catch (e: any) {
+        const code = e.response?.status;
+        console.warn(`Failed to refresh name for ${mod.workshop_id} (attempt ${attempt}):`, e);
+        if (attempt < maxAttempts && !importAbortRef.current) {
+          for (let s = 0; s < 5 && !importAbortRef.current; s++) {
+            await sleep(1000);
+          }
+        } else {
+          return { ok: false, error: code ? String(code) : (e.message || 'error') };
+        }
+      }
+    }
+    return { ok: false, error: 'error' };
+  };
+
+  // Refresh names for every mod whose name is still unresolved.
+  const handleRefreshNames = async () => {
+    if (!selectedServerId) return;
+    const snapshot = mods.filter(m => !m.name_resolved);
+    if (snapshot.length === 0) return;
+    setRefreshingNames(true);
+    setError(null);
+    importAbortRef.current = false;
+    setRefreshNameStatus({});
+    setRefreshNameProgress({ current: 0, total: snapshot.length, currentId: '' });
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    try {
+      for (let i = 0; i < snapshot.length; i++) {
+        if (importAbortRef.current) break;
+        const mod = snapshot[i];
+        setRefreshNameProgress({ current: i + 1, total: snapshot.length, currentId: mod.workshop_id });
+        setRefreshNameStatus(prev => ({ ...prev, [mod.id]: 'pending' }));
+        const res = await refreshOneName(mod);
+        if (!importAbortRef.current) {
+          setRefreshNameStatus(prev => ({ ...prev, [mod.id]: res.ok ? 'ok' : 'error' }));
+        }
+        // Small client-side spacing; backend already enforces the 3s throttle.
+        if (i < snapshot.length - 1 && !importAbortRef.current) {
+          await sleep(1000);
+        }
+      }
+    } catch (err: any) {
+      setError(err.response?.data?.detail || t('mods.refreshNamesError'));
+    } finally {
+      setRefreshingNames(false);
+      setRefreshNameProgress({ current: 0, total: 0, currentId: '' });
+      // Keep error markers so the user can retry; drop transient checkmarks.
+      setRefreshNameStatus(prev => {
+        const next: Record<number, 'pending' | 'ok' | 'error'> = {};
+        for (const [id, st] of Object.entries(prev)) {
+          if (st === 'error') next[Number(id)] = 'error';
+        }
+        return next;
+      });
+    }
+  };
+
+  // Retry refreshing the name for a single mod (per-card button).
+  const retryRefreshOneName = async (mod: Mod) => {
+    if (refreshingNames) return;
+    importAbortRef.current = false;
+    setRefreshNameStatus(prev => ({ ...prev, [mod.id]: 'pending' }));
+    const res = await refreshOneName(mod);
+    if (res.ok) {
+      setRefreshNameStatus(prev => ({ ...prev, [mod.id]: 'ok' }));
+      setTimeout(() => {
+        setRefreshNameStatus(prev => {
+          if (prev[mod.id] !== 'ok') return prev;
+          const n = { ...prev }; delete n[mod.id]; return n;
+        });
+      }, 3000);
+    } else {
+      setRefreshNameStatus(prev => ({ ...prev, [mod.id]: 'error' }));
     }
   };
 
@@ -919,6 +1014,8 @@ export const ModsManager: React.FC = () => {
   const enabledCount = serverMods.reduce((count, m) => count + m.enabled_mod_ids.length, 0);
   // Mods whose dependencies were never resolved yet (drive the "update unknown" button).
   const uncheckedCount = mods.filter(m => !m.dependencies_checked).length;
+  // Mods whose real Steam title is still unresolved (placeholder/unknown name).
+  const unresolvedNameCount = mods.filter(m => !m.name_resolved).length;
 
   // Preview of the exact lines that will be pushed to the server on Apply.
   // Mirrors the backend: only enabled mod_ids contribute, workshop ids are added
@@ -1141,7 +1238,10 @@ export const ModsManager: React.FC = () => {
                 </button>
               )}
               <div className="flex-1 min-w-0">
-                <div className="text-white truncate" title={mod.name || mod.mod_ids.join(', ')}>
+                <div
+                  className={`truncate ${mod.name_resolved ? 'text-white' : 'text-amber-400'}`}
+                  title={mod.name_resolved ? (mod.name || mod.mod_ids.join(', ')) : t('mods.nameUnresolved')}
+                >
                   {mod.name || mod.mod_ids[0]}
                 </div>
                 <div className="flex items-center gap-2 text-xs mt-0.5">
@@ -1177,6 +1277,26 @@ export const ModsManager: React.FC = () => {
                   <Search size={14} />
                 </button>
               )}
+              {!mod.name_resolved && (() => {
+                const st = refreshNameStatus[mod.id];
+                if (st === 'pending') {
+                  return (
+                    <span className="flex items-center p-1.5 text-teal-400" title={t('mods.refreshNames')}>
+                      <Loader2 size={14} className="animate-spin" />
+                    </span>
+                  );
+                }
+                return (
+                  <button
+                    onClick={() => retryRefreshOneName(mod)}
+                    disabled={refreshingNames}
+                    className={`p-1.5 ${st === 'error' ? 'bg-amber-600 hover:bg-amber-700' : 'bg-teal-600 hover:bg-teal-700'} disabled:opacity-50 text-white rounded transition`}
+                    title={st === 'error' ? t('mods.refreshNamesError') : t('mods.refreshName')}
+                  >
+                    <Tag size={14} />
+                  </button>
+                );
+              })()}
               {mod.dependencies.length > 0 && (
                 <span
                   className={`flex items-center p-1.5 ${isMissingDep ? 'text-red-400' : isMisordered ? 'text-amber-400' : 'text-gray-400'}`}
@@ -1328,6 +1448,15 @@ export const ModsManager: React.FC = () => {
             {uncheckedCount > 0 && <span className="text-xs font-semibold">{uncheckedCount}</span>}
           </button>
           <button
+            onClick={handleRefreshNames}
+            disabled={refreshingNames || loading || unresolvedNameCount === 0}
+            className="flex items-center gap-2 bg-teal-600 hover:bg-teal-700 disabled:bg-teal-800 text-white px-3 py-2 rounded-lg transition"
+            title={t('mods.refreshNames')}
+          >
+            {refreshingNames ? <Loader2 size={18} className="animate-spin" /> : <Tag size={18} />}
+            {unresolvedNameCount > 0 && <span className="text-xs font-semibold">{unresolvedNameCount}</span>}
+          </button>
+          <button
             onClick={loadMods}
             disabled={loading}
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white px-4 py-2 rounded-lg transition"
@@ -1451,6 +1580,30 @@ export const ModsManager: React.FC = () => {
             <div
               className="bg-amber-500 h-2 rounded-full transition-all duration-300"
               style={{ width: `${(rebuildProgress.current / rebuildProgress.total) * 100}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {refreshingNames && refreshNameProgress.total > 0 && (
+        <div className="bg-teal-900/30 border border-teal-700 rounded-lg p-3 space-y-2">
+          <div className="flex items-center justify-between text-sm">
+            <span className="flex items-center gap-2 text-teal-200">
+              <Loader2 size={16} className="animate-spin" />
+              {t('mods.refreshNames')}: {refreshNameProgress.current} / {refreshNameProgress.total}
+            </span>
+            <span className="font-mono text-teal-400">{refreshNameProgress.currentId}</span>
+            <button
+              onClick={() => { importAbortRef.current = true; }}
+              className="ml-2 bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded transition"
+            >
+              {t('common.cancel')}
+            </button>
+          </div>
+          <div className="w-full bg-gray-700 rounded-full h-2">
+            <div
+              className="bg-teal-500 h-2 rounded-full transition-all duration-300"
+              style={{ width: `${(refreshNameProgress.current / refreshNameProgress.total) * 100}%` }}
             />
           </div>
         </div>

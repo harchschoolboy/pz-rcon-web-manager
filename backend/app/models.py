@@ -96,6 +96,10 @@ class ServerMod(Base):
     enabled_mod_ids = Column(Text, nullable=True)  # Enabled mod IDs separated by ;
     dependencies = Column(Text, nullable=True)  # Dependency workshop IDs separated by ;
     name = Column(String(500), nullable=True)
+    # True once the real Steam Workshop title was successfully fetched. False
+    # means we only have a placeholder ("Workshop <id>") or no name, e.g. after
+    # a Steam 429 while syncing/adding. Drives the "refresh names" action.
+    name_resolved = Column(Boolean, default=False)
     
     # Status
     is_enabled = Column(Boolean, default=True)  # Master switch for this workshop item
