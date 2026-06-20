@@ -236,6 +236,7 @@ export interface Mod {
   workshop_url: string | null;
   dependencies: string[];      // Workshop IDs this mod depends on
   dependencies_checked: boolean; // False if dependencies were never resolved yet
+  name_resolved: boolean;      // False if name is a placeholder/unknown (e.g. after a Steam 429)
   created_at: string;
   updated_at: string;
 }
@@ -247,6 +248,7 @@ export interface ModCreate {
   name?: string;
   is_enabled?: boolean;
   dependencies?: string[];
+  name_resolved?: boolean;
 }
 
 export interface ModUpdate {
@@ -343,6 +345,11 @@ export const modsAPI = {
 
   update: async (serverId: number, modId: number, updates: ModUpdate): Promise<Mod> => {
     const { data } = await api.put(`/servers/${serverId}/mods/${modId}`, updates);
+    return data;
+  },
+
+  refreshName: async (serverId: number, modId: number): Promise<Mod> => {
+    const { data } = await api.post(`/servers/${serverId}/mods/${modId}/refresh-name`);
     return data;
   },
 

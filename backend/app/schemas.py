@@ -84,6 +84,7 @@ class ModCreate(BaseModel):
     name: Optional[str] = Field(None, description="Mod name")
     is_enabled: bool = Field(True, description="Master switch - whether mod is enabled")
     dependencies: list[str] = Field(default_factory=list, description="Dependency workshop IDs")
+    name_resolved: bool = Field(False, description="Whether the real Steam title was fetched")
 
 
 class ModUpdate(BaseModel):
@@ -106,6 +107,7 @@ class ModResponse(BaseModel):
     workshop_url: Optional[str]
     dependencies: list[str] = Field(default_factory=list, description="Dependency workshop IDs")
     dependencies_checked: bool = Field(default=True, description="Whether dependencies have ever been resolved for this mod")
+    name_resolved: bool = Field(default=False, description="Whether the real Steam title was fetched (False = placeholder/none)")
     created_at: datetime
     updated_at: datetime
     

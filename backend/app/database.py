@@ -43,6 +43,22 @@ async def run_migrations(conn):
         # Column already exists
         pass
 
+    # Migration: add name_resolved column to server_mods table.
+    # Tracks whether the real Steam Workshop title was fetched (vs a placeholder
+    # like "Workshop <id>" that can result from a Steam 429 during sync/add).
+    try:
+        await conn.execute(text("ALTER TABLE server_mods ADD COLUMN name_resolved BOOLEAN DEFAULT 0"))
+        # Backfill: treat any existing real name as resolved, but flag rows that
+        # have no name or only the placeholder "Workshop <id>" as unresolved so
+        # the user can refresh them.
+        await conn.execute(text(
+            "UPDATE server_mods SET name_resolved = 1 "
+            "WHERE name IS NOT NULL AND name != '' AND name NOT LIKE 'Workshop %'"
+        ))
+    except Exception:
+        # Column already exists
+        pass
+
 
 async def init_db():
     """Initialize database - create all tables"""

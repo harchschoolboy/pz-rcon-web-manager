@@ -16,6 +16,10 @@ Web-based administration panel for Project Zomboid dedicated servers. Manage you
 - **Authentication** — secure access with username/password
 - **Real-time status** — WebSocket-based connection status and player count
 
+## What's New in v1.6.3
+
+- **Large RCON response fix** — responses are now reassembled using proper length-framed packet reading, so big outputs (like the `WorkshopItems=` line from `showoptions`) are no longer split across lines or missing characters. This fixes mods being only partially received from the server
+
 ## What's New in v1.6.2
 
 - **Missing dependency warnings** — mods whose known dependency is not staged on the server get a red outline, and Apply shows a confirmation listing the missing dependencies

@@ -768,7 +768,7 @@ async def get_server_options(
 # Steam rate limiting: Steam returns HTTP 429 when hit too fast. Serialize all
 # outbound Steam requests (API + HTML scraping) and space them by a minimum
 # interval so bursts (a mod plus each of its dependencies) stay under the limit.
-_STEAM_MIN_INTERVAL = 1.0  # seconds between consecutive Steam requests
+_STEAM_MIN_INTERVAL = 3.0  # seconds between consecutive Steam requests
 _steam_lock = asyncio.Lock()
 _steam_last_request = 0.0
 
@@ -1091,6 +1091,18 @@ def _effective_enabled_mod_ids(mod_ids: list, enabled_mod_ids: list) -> list:
     return enabled_mod_ids
 
 
+def _is_placeholder_name(name: Optional[str]) -> bool:
+    """True if the name is missing or just the "Workshop <id>" placeholder.
+
+    A placeholder is what we store when the real Steam title could not be
+    fetched (e.g. a 429 during sync). Such items should be marked
+    name_resolved=False so the UI can offer a name refresh.
+    """
+    if not name or not name.strip():
+        return True
+    return bool(re.match(r'^Workshop\s+\d+$', name.strip()))
+
+
 @app.get("/servers/{server_id}/mods", response_model=List[ModResponse])
 async def list_server_mods(
     server_id: int,
@@ -1125,6 +1137,7 @@ async def list_server_mods(
             workshop_url=mod.workshop_url,
             dependencies=mod.dependencies.split(';') if mod.dependencies else [],
             dependencies_checked=mod.dependencies is not None,
+            name_resolved=mod.name_resolved,
             created_at=mod.created_at,
             updated_at=mod.updated_at
         ))
@@ -1163,6 +1176,10 @@ async def add_server_mod(
         # off the server just because the add payload defaults to known).
         if mod.dependencies:
             existing_mod.dependencies = ';'.join(mod.dependencies)
+        # Upgrade a placeholder name to a real one if this add carries it.
+        if not _is_placeholder_name(mod.name) and not existing_mod.name_resolved:
+            existing_mod.name = mod.name
+            existing_mod.name_resolved = True
         existing_mod.updated_at = datetime.utcnow()
         
         await db.commit()
@@ -1180,6 +1197,7 @@ async def add_server_mod(
             workshop_url=existing_mod.workshop_url,
             dependencies=existing_mod.dependencies.split(';') if existing_mod.dependencies else [],
             dependencies_checked=existing_mod.dependencies is not None,
+            name_resolved=existing_mod.name_resolved,
             created_at=existing_mod.created_at,
             updated_at=existing_mod.updated_at
         )
@@ -1195,6 +1213,7 @@ async def add_server_mod(
         enabled_mod_ids=enabled_mod_ids_str,
         dependencies=';'.join(mod.dependencies) if mod.dependencies else None,
         name=mod.name,
+        name_resolved=not _is_placeholder_name(mod.name),
         is_enabled=mod.is_enabled,
         workshop_url=f"https://steamcommunity.com/sharedfiles/filedetails/?id={mod.workshop_id}"
     )
@@ -1215,6 +1234,7 @@ async def add_server_mod(
         workshop_url=db_mod.workshop_url,
         dependencies=mod.dependencies or [],
         dependencies_checked=db_mod.dependencies is not None,
+        name_resolved=db_mod.name_resolved,
         created_at=db_mod.created_at,
         updated_at=db_mod.updated_at
     )
@@ -1293,6 +1313,7 @@ async def set_server_mods_order(
             workshop_url=mod.workshop_url,
             dependencies=mod.dependencies.split(';') if mod.dependencies else [],
             dependencies_checked=mod.dependencies is not None,
+            name_resolved=mod.name_resolved,
             created_at=mod.created_at,
             updated_at=mod.updated_at
         ))
@@ -1344,6 +1365,11 @@ async def update_server_mod(
         logger.info(f"update mod id={mod_id} workshop={mod.workshop_id} deps={len(deps) if deps else 0}")
         del update_data['dependencies']
     
+    # A real name supplied via update marks the mod as name-resolved; a
+    # placeholder ("Workshop <id>") or empty value leaves it unresolved.
+    if 'name' in update_data:
+        mod.name_resolved = not _is_placeholder_name(update_data['name'])
+    
     # Handle other fields (including explicit is_enabled when provided)
     for field, value in update_data.items():
         setattr(mod, field, value)
@@ -1368,6 +1394,71 @@ async def update_server_mod(
         workshop_url=mod.workshop_url,
         dependencies=mod.dependencies.split(';') if mod.dependencies else [],
         dependencies_checked=mod.dependencies is not None,
+        name_resolved=mod.name_resolved,
+        created_at=mod.created_at,
+        updated_at=mod.updated_at
+    )
+
+
+@app.post("/servers/{server_id}/mods/{mod_id}/refresh-name", response_model=ModResponse)
+async def refresh_mod_name(
+    server_id: int,
+    mod_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: str = Depends(get_current_user)
+):
+    """Re-fetch the Steam Workshop title for a single mod.
+
+    Goes through the shared Steam throttle (3s spacing) so it is safe to call
+    in a loop. Used to backfill names that fell back to a "Workshop <id>"
+    placeholder after a Steam 429. Propagates 429 so the client can retry.
+    """
+    result = await db.execute(
+        select(ServerMod).where(
+            ServerMod.id == mod_id,
+            ServerMod.server_id == server_id
+        )
+    )
+    mod = result.scalar_one_or_none()
+    if not mod:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Mod not found"
+        )
+
+    details = await fetch_workshop_details_via_api(mod.workshop_id)
+    title = details.get('title') if details else None
+    if not title:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Could not resolve name for workshop {mod.workshop_id}"
+        )
+
+    mod.name = title
+    mod.name_resolved = True
+    mod.updated_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(mod)
+    logger.info(f"refresh-name mod id={mod_id} workshop={mod.workshop_id} name={title!r}")
+
+    mod_ids_list = mod.mod_ids.split(';') if mod.mod_ids else []
+    enabled_mod_ids_list = _effective_enabled_mod_ids(
+        mod_ids_list,
+        mod.enabled_mod_ids.split(';') if mod.enabled_mod_ids else []
+    )
+    return ModResponse(
+        id=mod.id,
+        server_id=mod.server_id,
+        workshop_id=mod.workshop_id,
+        mod_ids=mod_ids_list,
+        enabled_mod_ids=enabled_mod_ids_list,
+        name=mod.name,
+        is_enabled=mod.is_enabled,
+        position=mod.position,
+        workshop_url=mod.workshop_url,
+        dependencies=mod.dependencies.split(';') if mod.dependencies else [],
+        dependencies_checked=mod.dependencies is not None,
+        name_resolved=mod.name_resolved,
         created_at=mod.created_at,
         updated_at=mod.updated_at
     )
@@ -1494,7 +1585,8 @@ async def export_server_mods(
                 ),
                 name=mod.name,
                 is_enabled=mod.is_enabled,
-                dependencies=mod.dependencies.split(';') if mod.dependencies else []
+                dependencies=mod.dependencies.split(';') if mod.dependencies else [],
+                name_resolved=mod.name_resolved
             )
             for mod in mods
         ]
@@ -1537,7 +1629,8 @@ async def download_server_mods(
                 ),
                 "name": mod.name,
                 "is_enabled": mod.is_enabled,
-                "dependencies": mod.dependencies.split(';') if mod.dependencies else []
+                "dependencies": mod.dependencies.split(';') if mod.dependencies else [],
+                "name_resolved": mod.name_resolved
             }
             for mod in mods
         ]
@@ -1595,6 +1688,11 @@ async def import_server_mods(
             # Dependencies: prefer imported list when present, else keep existing.
             if mod_data.dependencies:
                 existing.dependencies = ';'.join(mod_data.dependencies)
+            # Upgrade a placeholder/unknown name from the imported real name.
+            imported_resolved = mod_data.name_resolved and not _is_placeholder_name(mod_data.name)
+            if imported_resolved and not existing.name_resolved:
+                existing.name = mod_data.name
+                existing.name_resolved = True
             existing.updated_at = datetime.utcnow()
             updated += 1
         else:
@@ -1605,6 +1703,7 @@ async def import_server_mods(
                 mod_ids=';'.join(mod_data.mod_ids) if mod_data.mod_ids else '',
                 enabled_mod_ids=';'.join(normalized_enabled) if normalized_enabled else '',
                 name=mod_data.name,
+                name_resolved=mod_data.name_resolved and not _is_placeholder_name(mod_data.name),
                 is_enabled=len(normalized_enabled) > 0,
                 dependencies=';'.join(mod_data.dependencies) if mod_data.dependencies else None,
                 workshop_url=f"https://steamcommunity.com/sharedfiles/filedetails/?id={mod_data.workshop_id}"
@@ -1770,15 +1869,24 @@ async def sync_mods_from_server(
                             "status": "updated"
                         })
                     else:
-                        # New workshop item - fetch name from Steam
-                        name = await fetch_mod_name_from_steam(client, workshop_id)
-                        
+                        # New workshop item - fetch the real Steam title via the
+                        # throttled API (shared 3s rate limit + browser headers).
+                        # On failure (e.g. 429) fall back to a placeholder and
+                        # flag the item as unresolved so it can be refreshed later.
+                        name = None
+                        try:
+                            details = await fetch_workshop_details_via_api(workshop_id)
+                            name = details.get('title') if details else None
+                        except Exception as name_err:
+                            logger.warning(f"sync name fetch failed workshop_id={workshop_id}: {name_err}")
+
                         new_mod = ServerMod(
                             server_id=server_id,
                             workshop_id=workshop_id,
                             mod_ids=';'.join(active_mod_ids),
                             enabled_mod_ids=';'.join(active_mod_ids),
                             name=name or f"Workshop {workshop_id}",
+                            name_resolved=name is not None,
                             is_enabled=len(active_mod_ids) > 0,
                             workshop_url=f"https://steamcommunity.com/sharedfiles/filedetails/?id={workshop_id}"
                         )

@@ -51,6 +51,10 @@ class RCONClient:
         self._request_id = 0
         self._connected = False
         self._authenticated = False
+        # Raw byte buffer for length-framed packet reassembly. TCP is a byte
+        # stream, so a single recv() may contain a partial packet, multiple
+        # packets, or a packet split across reads. We buffer and frame manually.
+        self._recv_buffer = b''
         
         logger.info(f"RCONClient initialized for {host}:{port}")
     
@@ -73,31 +77,63 @@ class RCONClient:
         logger.debug(f"Raw packet hex: {packet.hex()}")
         return packet
     
-    def _unpack_packet(self, data: bytes) -> tuple[int, int, str]:
-        """Unpack RCON packet"""
-        logger.debug(f"Unpacking {len(data)} bytes: {data[:100].hex()}...")
-        
-        if len(data) < 4:
-            logger.warning(f"Packet too short: {len(data)} bytes")
-            return 0, 0, ""
-        
-        size = struct.unpack('<i', data[0:4])[0]
-        logger.debug(f"Packet size from header: {size}")
-        
-        if len(data) < 12:
-            logger.warning(f"Packet incomplete: have {len(data)}, need at least 12")
-            return 0, 0, ""
-        
-        packet_id = struct.unpack('<i', data[4:8])[0]
-        packet_type = struct.unpack('<i', data[8:12])[0]
-        
-        # Body might be empty
-        if size > 8:
-            body = data[12:12+size-8].decode('utf-8', errors='ignore').rstrip('\x00')
-        else:
-            body = ""
-        
-        logger.debug(f"Unpacked: id={packet_id}, type={packet_type}, body='{body[:100]}'")
+    def _recv_into_buffer(self) -> bool:
+        """Pull more bytes from the socket into the receive buffer.
+
+        Returns True if bytes were appended, False on a socket timeout (which we
+        use to detect "no more data is coming"). Raises on a closed connection.
+        """
+        chunk = self._socket.recv(4096)
+        if not chunk:
+            raise RCONConnectionError("Connection closed by server")
+        self._recv_buffer += chunk
+        logger.debug(f"Buffered {len(chunk)} bytes (buffer now {len(self._recv_buffer)})")
+        return True
+
+    def _read_packet(self) -> Optional[tuple[int, int, str]]:
+        """Read exactly one complete RCON packet using length framing.
+
+        RCON packets are prefixed with a 4-byte little-endian size that covers
+        the id (4) + type (4) + body + 2 null terminators. We wait until the
+        whole frame is in the buffer before parsing, so TCP segmentation can no
+        longer split a packet (which previously corrupted large responses and
+        injected stray newlines). Returns None when the socket times out while
+        waiting for the next packet, signalling the end of the response.
+        """
+        # Wait for the 4-byte length prefix. A timeout here means no further
+        # packet is pending -> end of this response.
+        while len(self._recv_buffer) < 4:
+            try:
+                self._recv_into_buffer()
+            except socket.timeout:
+                return None
+
+        size = struct.unpack('<i', self._recv_buffer[0:4])[0]
+        if size < 8 or size > 4 * 1024 * 1024:
+            raise RCONConnectionError(f"Invalid RCON packet size: {size}")
+
+        total = 4 + size
+        # We are now mid-packet: the remaining bytes are in flight, so keep
+        # reading (tolerating a few transient timeouts) until the frame is whole.
+        consecutive_timeouts = 0
+        while len(self._recv_buffer) < total:
+            try:
+                self._recv_into_buffer()
+                consecutive_timeouts = 0
+            except socket.timeout:
+                consecutive_timeouts += 1
+                if consecutive_timeouts > 5:
+                    raise RCONConnectionError("Timed out reading packet body")
+
+        frame = self._recv_buffer[:total]
+        self._recv_buffer = self._recv_buffer[total:]
+
+        packet_id = struct.unpack('<i', frame[4:8])[0]
+        packet_type = struct.unpack('<i', frame[8:12])[0]
+        # Body is everything after the header, up to the first null terminator.
+        body = frame[12:total].split(b'\x00', 1)[0].decode('utf-8', errors='ignore')
+
+        logger.debug(f"Read packet: id={packet_id}, type={packet_type}, body_len={len(body)}")
         return packet_id, packet_type, body
     
     def connect(self) -> None:
@@ -123,15 +159,22 @@ class RCONClient:
         packet = self._pack_packet(request_id, self.SERVERDATA_AUTH, self.password)
         
         try:
+            self._recv_buffer = b''
             self._socket.send(packet)
             logger.debug(f"Sent auth packet, waiting for response...")
-            
-            # Read response
-            response_data = self._socket.recv(4096)
-            logger.debug(f"Received {len(response_data)} bytes")
-            
-            response_id, response_type, _ = self._unpack_packet(response_data)
-            
+
+            # The server may send an empty SERVERDATA_RESPONSE_VALUE before the
+            # actual auth response; read framed packets until we get the auth
+            # response (type 2) or run out of data.
+            response_id = 0
+            while True:
+                pkt = self._read_packet()
+                if pkt is None:
+                    raise RCONConnectionError("No authentication response from server")
+                response_id, response_type, _ = pkt
+                if response_type == self.SERVERDATA_AUTH_RESPONSE:
+                    break
+
             # Check for auth failure (ID = -1)
             if response_id == -1:
                 logger.error("Authentication failed: invalid password")
@@ -154,36 +197,33 @@ class RCONClient:
         packet = self._pack_packet(request_id, self.SERVERDATA_EXECCOMMAND, command)
         
         try:
+            self._recv_buffer = b''
             self._socket.send(packet)
             logger.debug(f"Sent command packet")
             
-            # Read response - may come in multiple packets
+            # Read the response as length-framed packets. A large response (e.g.
+            # showoptions / WorkshopItems) may arrive as one big packet or be
+            # split by the server into several RESPONSE_VALUE packets; either way
+            # we reassemble bodies in order with NO separator, so the original
+            # text is reproduced exactly.
             response_parts = []
-            self._socket.settimeout(2)  # Short timeout for reading responses
-            
-            while True:
-                try:
-                    response_data = self._socket.recv(4096)
-                    logger.debug(f"Received {len(response_data)} bytes")
-                    
-                    if not response_data:
-                        logger.debug("Empty response, breaking")
+            self._socket.settimeout(2)  # Short timeout to detect end-of-response
+
+            try:
+                while True:
+                    pkt = self._read_packet()
+                    if pkt is None:
+                        # Timed out waiting for the next packet -> response done.
+                        logger.debug("No more packets, response complete")
                         break
-                    
-                    _, response_type, body = self._unpack_packet(response_data)
-                    logger.debug(f"Parsed body: '{body[:200] if body else '(empty)'}'")
-                    
+                    _, _, body = pkt
                     if body:
                         response_parts.append(body)
-                        
-                except socket.timeout:
-                    logger.debug("Socket timeout, no more data")
-                    break
+            finally:
+                # Restore original timeout
+                self._socket.settimeout(self.timeout)
             
-            # Restore original timeout
-            self._socket.settimeout(self.timeout)
-            
-            result = '\n'.join(response_parts) if response_parts else "(команда виконана без відповіді)"
+            result = ''.join(response_parts) if response_parts else "(команда виконана без відповіді)"
             logger.info(f"Command result: '{result[:200]}...'")
             return result
             
@@ -204,6 +244,7 @@ class RCONClient:
                 self._socket = None
                 self._connected = False
                 self._authenticated = False
+                self._recv_buffer = b''
     
     def __enter__(self):
         """Context manager entry"""
