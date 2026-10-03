@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List, Dict, Set, Optional
 import json
+import html as html_lib
 import re
 import sys
 import httpx
@@ -811,6 +812,16 @@ async def _steam_throttle():
         _steam_last_request = asyncio.get_event_loop().time()
 
 
+def _clean_mod_id(raw: str) -> str:
+    """Normalize a captured 'Mod ID:' value: drop BBCode/HTML tags, decode entities, trim."""
+    value = re.sub(r'\[/?[a-zA-Z0-9*]+(?:=[^\]]*)?\]', '', raw)
+    value = re.sub(r'<[^>]+>', '', value)
+    value = html_lib.unescape(value)
+    # ';' is the separator in server config / DB storage, never part of an ID.
+    value = value.split(';')[0]
+    return value.strip()
+
+
 async def fetch_workshop_details_via_api(workshop_id: str) -> dict:
     """Fetch mod details via Steam API (faster and more reliable than HTML parsing)"""
     url = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/"
@@ -840,9 +851,11 @@ async def fetch_workshop_details_via_api(workshop_id: str) -> dict:
     # Strict format only: "Mod ID: <id>" (a literal colon is required).
     # A loose pattern previously matched "Mod ID" followed by any whitespace,
     # which captured stray words from prose and pulled wrong records.
+    # The ID is the rest of the line: PZ mod IDs may contain spaces, ', &, !, dots
+    # (e.g. "GanydeBielovzki's Frockin Splendor! Vol.2", "Distillery&Biofuel").
     mod_ids = []
-    for match in re.finditer(r'Mod\s*ID\s*:\s*([A-Za-z0-9_-]+)', description, re.IGNORECASE):
-        mod_id = match.group(1).strip()
+    for match in re.finditer(r'Mod\s*ID\s*:[ \t]*([^\r\n]+)', description, re.IGNORECASE):
+        mod_id = _clean_mod_id(match.group(1))
         if mod_id and mod_id not in mod_ids and len(mod_id) > 1:
             mod_ids.append(mod_id)
     
@@ -1940,13 +1953,13 @@ async def fetch_mod_id_from_steam(client: httpx.AsyncClient, workshop_id: str) -
             follow_redirects=True
         )
         html = response.text
-        # Look for "Mod ID: <b>xxx</b>" pattern first
-        mod_id_match = re.search(r'Mod\s*ID:\s*<b>([A-Za-z0-9_-]+)</b>', html, re.IGNORECASE)
-        if mod_id_match:
-            return mod_id_match.group(1).strip()
-        # Fallback to plain text pattern
-        mod_id_match = re.search(r'Mod\s*ID:\s*([A-Za-z0-9_-]+)', html, re.IGNORECASE)
-        return mod_id_match.group(1).strip() if mod_id_match else None
+        # Value runs until the line break (<br>) or end of line; may contain spaces, ', &.
+        mod_id_match = re.search(
+            r'Mod\s*ID\s*:\s*((?:<b>)?[^<\r\n]+(?:</b>)?)', html, re.IGNORECASE
+        )
+        if not mod_id_match:
+            return None
+        return _clean_mod_id(mod_id_match.group(1)) or None
     except:
         return None
 

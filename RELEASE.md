@@ -1,5 +1,19 @@
 # Release Notes - PZ WebAdmin
 
+## v1.7.0
+
+### Highlights
+
+- **Mod ID parsing fix** — Mod IDs read from the Steam Workshop description are no longer truncated at the first space, apostrophe or ampersand. The parser previously accepted only letters, digits, `_` and `-`, so `Fallout Hummer by Papa_Chad` was read as `Fallout`, `Distillery&Biofuel` as `Distillery`, and `GanydeBielovzki's Frockin Splendor!` as `GanydeBielovzki`. The full value after `Mod ID:` up to the end of the line is now used, with BBCode/HTML tags stripped and HTML entities decoded.
+
+### Notes
+
+- Backend-only change. No database migration or configuration change is required.
+- Mods that were already added with a truncated Mod ID are not corrected automatically. Remove and re-add them, or fix the Mod ID manually.
+- If a mod author writes extra text on the same line after the ID (for example `Mod ID: foo (requires bar)`), that text becomes part of the ID and must be corrected manually.
+
+---
+
 ## v1.6.3
 
 ### Highlights

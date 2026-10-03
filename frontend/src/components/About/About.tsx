@@ -2,7 +2,7 @@ import React from 'react';
 import { useI18n } from '../../i18n';
 import { Info, Github, Container, Check, X, ExternalLink, ListChecks } from 'lucide-react';
 
-const APP_VERSION = '1.6.3';
+const APP_VERSION = '1.7.0';
 
 export const About: React.FC = () => {
   const { t } = useI18n();
@@ -30,6 +30,7 @@ export const About: React.FC = () => {
   ];
 
   const importantChanges = [
+    t('about.change.modIdParsing'),
     t('about.change.rconLargeResponse'),
     t('about.change.missingDeps'),
     t('about.change.applyPreview'),

@@ -16,6 +16,10 @@ Web-based administration panel for Project Zomboid dedicated servers. Manage you
 - **Authentication** — secure access with username/password
 - **Real-time status** — WebSocket-based connection status and player count
 
+## What's New in v1.7.0
+
+- **Mod ID parsing fix** — Mod IDs containing spaces, apostrophes or `&` (e.g. `Fallout Hummer by Papa_Chad`, `Distillery&Biofuel`, `GanydeBielovzki's Frockin Splendor!`) are now read in full instead of being cut off at the first special character
+
 ## What's New in v1.6.3
 
 - **Large RCON response fix** — responses are now reassembled using proper length-framed packet reading, so big outputs (like the `WorkshopItems=` line from `showoptions`) are no longer split across lines or missing characters. This fixes mods being only partially received from the server
